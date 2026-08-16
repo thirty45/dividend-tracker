@@ -1,0 +1,20 @@
+{
+  "project_name": "红利股票跟踪",
+  "fund_min_year": 2020,
+  "fund_workers": 6,
+  "dividend_index_ids": ["000922", "h30269", "399324", "000015", "930955"],
+  "dividend_index_names": {
+    "000922": "中证红利",
+    "h30269": "红利低波",
+    "399324": "深证红利",
+    "000015": "上证红利",
+    "930955": "红利低波100"
+  },
+  "concept_boards": ["BK1641", "BK1636"],
+  "concept_board_names": {"BK1641": "红利股概念", "BK1636": "红利破净股概念"},
+  "high_yield_min_pct": 3.0,
+  "high_yield_min_mv": 10000000000,
+  "kline_start": "20200101",
+  "history_keep": 400,
+  "workers": 8
+}

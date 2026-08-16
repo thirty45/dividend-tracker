@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>红利股票跟踪</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.staticfile.org/echarts/5.5.0/echarts.min.js"></script>
+  <script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
+</head>
+<body>
+  <header>
+    <div class="head-row">
+      <h1>红利股票跟踪</h1>
+      <span id="meta" class="meta"></span>
+    </div>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="搜索代码 / 名称 / 行业 / 标签">
+      <nav class="tabs">
+        <button id="tab-list" class="active">股票列表</button>
+        <button id="tab-boards">板块市值排名</button>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section id="view-list">
+      <div class="table-wrap">
+        <table id="stock-table">
+          <thead>
+            <tr>
+              <th data-k="code">代码</th>
+              <th data-k="name">名称</th>
+              <th data-k="close">现价</th>
+              <th data-k="pct">涨跌幅%</th>
+              <th data-k="dy" class="num">股息率TTM%</th>
+              <th data-k="pe" class="num">市盈率TTM</th>
+              <th data-k="pb" class="num">市净率</th>
+              <th data-k="mv" class="num">总市值(亿)</th>
+              <th data-k="roe" class="num">ROE%</th>
+              <th data-k="industry">行业</th>
+              <th>标签</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="list-info" class="muted"></div>
+    </section>
+
+    <section id="view-boards" hidden>
+      <div class="table-wrap">
+        <table id="board-table">
+          <thead>
+            <tr>
+              <th>行业板块</th>
+              <th class="num">总市值(亿)</th>
+              <th class="num">成分股数</th>
+              <th class="num">平均股息率TTM%</th>
+              <th class="num">平均市盈率</th>
+              <th class="num">平均ROE%</th>
+              <th class="num">板块涨跌幅%</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="muted">点击行业行可筛选下方股票列表</div>
+    </section>
+
+    <section id="view-detail" hidden>
+      <button id="back" class="back">← 返回列表</button>
+      <h2 id="d-title"></h2>
+      <div id="d-sub" class="muted"></div>
+      <div id="d-cards" class="cards"></div>
+      <div class="toolbar chart-bar">
+        <label><input type="checkbox" id="ck-ma" checked> 均线(MA5/10/20/60)</label>
+        <label><input type="checkbox" id="ck-boll"> BOLL(20,2)</label>
+        <label><input type="checkbox" id="ck-dmi"> DMI(14)</label>
+      </div>
+      <div id="chart"></div>
+      <h3>指标历史</h3>
+      <div id="trends" class="trends"></div>
+    </section>
+  </main>
+  <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 15:35 后自动更新</footer>
+  <script src="app.js"></script>
+</body>
+</html>
