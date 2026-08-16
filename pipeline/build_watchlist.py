@@ -49,7 +49,7 @@ def main():
             prev = json.load(f)
         prev_holdings = {p["code"]: p for p in prev.get("funds", [])}
 
-    print("2/4 抓取近5年基金前十大持仓 ...")
+    print("2/5 抓取近5年基金前十大持仓 ...")
     to_fetch = []
     for code, name, ftype in funds:
         if args.resume:
@@ -87,7 +87,7 @@ def main():
             st["periods"] += 1
     print("   基金持仓共涉及 %d 只股票" % len(stocks))
 
-    print("3/4 抓取红利指数成分股 ...")
+    print("3/5 抓取红利指数成分股 ...")
     for idx, tag in cfg["dividend_index_names"].items():
         try:
             rows = sm.fetch_sina_index(idx)
@@ -115,7 +115,7 @@ def main():
         except Exception as exc:  # noqa: BLE001
             print("   %s(%s) 失败: %s" % (tag, bk, exc))
 
-    print("4/4 高股息筛选 ...")
+    print("4/5 高股息筛选 ...")
     trade_date, valuation = sm.fetch_valuation()
     end = datetime.date.today()
     start = end - datetime.timedelta(days=366)
@@ -138,6 +138,30 @@ def main():
             "name": val[code].get("SECURITY_NAME_ABBR") or code,
             "funds": set(), "max_pct": 0.0, "periods": 0})
         st.setdefault("indices", []).append("高股息")
+
+    print("5/5 剔除分红/退市不合格股票 ...")
+    n_dy = cfg.get("dividend_years", 3)
+    today = datetime.date.today()
+    need_years = set(range(today.year - n_dy + 1, today.year + 1))
+    start3 = "%d-01-01" % (today.year - n_dy + 1)
+    div_map = sm.fetch_dividends_by_year(start3, today.isoformat())
+    print("   近%d年有分红记录的股票: %d 只" % (n_dy, len(div_map)))
+    removed_no_div, removed_delisted, keep = [], [], {}
+    for code, st in sorted(stocks.items()):
+        years_with = set((div_map.get(code) or {}).keys())
+        if not need_years.issubset(years_with):
+            removed_no_div.append(code)
+            continue
+        if code not in val:
+            removed_delisted.append(code)
+            continue
+        keep[code] = st
+    print("   剔除: 近%d年有缺少年份分红 %d 只, 已退市/无行情 %d 只"
+          % (n_dy, len(removed_no_div), len(removed_delisted)))
+    examples = ["%s(%s)" % (c, (stocks[c].get("name") or c))
+                for c in (removed_no_div + removed_delisted)[:15]]
+    print("   剔除示例: " + ", ".join(examples))
+    stocks = keep
 
     out = []
     for code, st in sorted(stocks.items()):

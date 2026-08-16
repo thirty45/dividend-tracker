@@ -128,6 +128,38 @@ def fetch_sharebonus(start_date, end_date, page_size=500):
     return per_share
 
 
+def fetch_dividends_by_year(start_date, end_date, page_size=500):
+    """区间内已实施分红 -> {code: {年份: 每股税前现金分红合计}}。"""
+    out = {}
+    page = 1
+    while True:
+        j = fetch_json(DC_WEB_URL, params={
+            "reportName": "RPT_SHAREBONUS_DET",
+            "columns": "SECURITY_CODE,EX_DIVIDEND_DATE,PRETAX_BONUS_RMB",
+            "filter": "(EX_DIVIDEND_DATE>='%s')(EX_DIVIDEND_DATE<='%s')"
+                      % (start_date, end_date),
+            "pageSize": str(page_size), "pageNumber": str(page),
+            "sortColumns": "EX_DIVIDEND_DATE", "sortTypes": "1",
+            "source": "WEB", "client": "WEB"},
+            referer="https://data.eastmoney.com/", retries=4, delay=1.0)
+        res = j.get("result") or {}
+        data = res.get("data") or []
+        for r in data:
+            code = r.get("SECURITY_CODE")
+            v = r.get("PRETAX_BONUS_RMB")
+            dt = (r.get("EX_DIVIDEND_DATE") or "")[:10]
+            if not code or v is None or not dt:
+                continue
+            year = int(dt[:4])
+            per = out.setdefault(code, {})
+            per[year] = per.get(year, 0.0) + float(v) / 10.0
+        pages = res.get("pages") or 0
+        if page >= pages or not data:
+            break
+        page += 1
+    return out
+
+
 def _norm_date(s):
     s = str(s)
     if len(s) == 8:

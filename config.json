@@ -14,6 +14,7 @@
   "concept_board_names": {"BK1641": "红利股概念", "BK1636": "红利破净股概念"},
   "high_yield_min_pct": 3.0,
   "high_yield_min_mv": 10000000000,
+  "dividend_years": 3,
   "kline_start": "20200101",
   "history_keep": 400,
   "workers": 8
