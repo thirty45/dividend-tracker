@@ -6,5 +6,3 @@ Thumbs.db
 run_*.log
 # 大文件不提交到仓库（由每日任务现场生成，仅用于网页部署）
 data/kline/
-data/snapshot*.json
-data/meta/boards.json
