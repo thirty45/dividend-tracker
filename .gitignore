@@ -4,5 +4,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 run_*.log
+推送*.ps1
 # 大文件不提交到仓库（由每日任务现场生成，仅用于网页部署）
 data/kline/
