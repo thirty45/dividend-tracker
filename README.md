@@ -50,6 +50,7 @@
 - 想看更多历史K线：页面图表下方有滑块，可缩放。
 - 手动触发更新：仓库 → Actions → daily-update → Run workflow。
 - 想更新股票池（基金持仓变化/新增高股息股）：本机执行 `python pipeline/build_watchlist.py`，把 `data/meta/watchlist.json` 和 `data/meta/fund_holdings.json` 提交推送即可（也可在 Actions 里手动跑，以后可加）。
+- 不想在本地跑也没关系：仓库 → Actions → **build-watchlist** → Run workflow，即可在云端重建股票池（约5~10分钟），完成后下次每日更新自动采用新股票池。
 
 ## 本地运行（可选）
 
@@ -61,6 +62,8 @@ python pipeline/update_daily.py      # 抓当天数据
 ```
 
 本地预览网页：在项目根目录执行 `python -m http.server 8000`，浏览器打开 `http://localhost:8000`。
+
+> 注：K线、每日快照、板块排名等大文件由云端任务每天现场生成，不提交进仓库；仓库里只保留股票池和指标历史，体积可控。
 
 ## 说明
 

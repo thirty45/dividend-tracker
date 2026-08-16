@@ -1,0 +1,31 @@
+name: build-watchlist
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 重建股票池（红利基金近5年持仓 + 红利指数成分 + 高股息）
+        run: python pipeline/build_watchlist.py
+
+      - name: 提交股票池变更
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/meta
+          git diff --cached --quiet || git commit -m "chore: 重建股票池 $(date -u +%F)"
+          git push
