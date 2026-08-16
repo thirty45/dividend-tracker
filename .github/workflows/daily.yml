@@ -2,8 +2,8 @@ name: daily-update
 
 on:
   schedule:
-    # 每天 15:35（北京时间 = 07:35 UTC），收盘后更新一次
-    - cron: '35 7 * * *'
+    # 每天 15:15（北京时间 = 07:15 UTC），收盘后更新一次
+    - cron: '15 7 * * *'
   workflow_dispatch:
 
 permissions:
