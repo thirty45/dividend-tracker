@@ -32,6 +32,8 @@ jobs:
         run: python pipeline/update_daily.py
         env:
           PYTHONUNBUFFERED: '1'
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
 
       - name: 提交数据变更
         run: |

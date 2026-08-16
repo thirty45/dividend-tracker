@@ -230,6 +230,35 @@ def main():
         with open(path, "w", encoding="utf-8") as f:
             json.dump(hist, f, ensure_ascii=False)
 
+    # 阈值提醒（跌破/涨破 -> 微信）
+    try:
+        from pipeline import alerts  # noqa: PLC0415
+        rules = alerts.load_rules(os.path.join(meta_dir, "alerts.json"))
+        events = alerts.check_crossings(rules, items, hist_dir)
+        if events:
+            lines = [
+                "**%s(%s)** %s %.2f%%：当前 %s%%（前值 %s%%）" % (
+                    e["name"], e["code"], e["kind"], e["threshold"],
+                    ("%.2f" % e["cur"]), ("%.2f" % e["prev"]))
+                for e in events]
+            title = "红利提醒：%d 条阈值变动" % len(events)
+            desp = "\n\n".join(lines) + "\n\n数据日期：%s" % trade_date
+            key = os.environ.get("SERVERCHAN_KEY", "").strip()
+            webhook = os.environ.get("WECOM_WEBHOOK", "").strip()
+            if key:
+                resp = alerts.send_serverchan(key, title, desp)
+                print("   已推送 Server酱: %s" % str(resp)[:100], flush=True)
+            elif webhook:
+                resp = alerts.send_wecom(webhook, title, desp)
+                print("   已推送 企业微信: %s" % str(resp)[:100], flush=True)
+            else:
+                print("   有提醒但未配置推送渠道"
+                      "（仓库 Secrets 里设置 SERVERCHAN_KEY 或 WECOM_WEBHOOK）", flush=True)
+        else:
+            print("   无阈值提醒", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("   提醒模块异常: %s" % exc, flush=True)
+
     with open(os.path.join(meta_dir, "boards.json"), "w",
               encoding="utf-8") as f:
         json.dump({"date": trade_date, "boards": board_rows}, f,

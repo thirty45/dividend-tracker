@@ -53,6 +53,41 @@
 - 想更新股票池（基金持仓变化/新增高股息股）：本机执行 `python pipeline/build_watchlist.py`，把 `data/meta/watchlist.json` 和 `data/meta/fund_holdings.json` 提交推送即可（也可在 Actions 里手动跑，以后可加）。
 - 不想在本地跑也没关系：仓库 → Actions → **build-watchlist** → Run workflow，即可在云端重建股票池（约5~10分钟），完成后下次每日更新自动采用新股票池。
 
+## 股息率阈值提醒（推送到微信）
+
+每天数据更新后，系统会自动对比今日与昨日股息率，一旦发生“跌破 / 涨破”你设定的阈值，就推送一条微信提醒。
+
+### 配置提醒规则
+
+编辑 `data/meta/alerts.json`，例如：
+
+```json
+{
+  "rules": [
+    {"code": "600900", "name": "长江电力", "dy_below": 4.0, "dy_above": 5.5},
+    {"code": "601088", "name": "中国神华", "dy_below": 4.5}
+  ]
+}
+```
+
+- `dy_below`：股息率跌破该值（%）时提醒；
+- `dy_above`：涨破该值（%）时提醒；两者可只填一个。
+- 保存后推送到仓库即可（也可以直接在 GitHub 网页上改这个文件）。
+
+### 配置推送渠道（二选一）
+
+**方式一：Server酱（推荐，最省事）**
+1. 打开 [sct.ftqq.com](https://sct.ftqq.com)，用 GitHub 账号登录，复制你的 SendKey（`SCT` 开头）；
+2. 仓库 → Settings → Secrets and variables → Actions → **New repository secret**：名称填 `SERVERCHAN_KEY`，值粘贴 SendKey；
+3. 按网页提示关注“方糖”公众号即可收到消息（免费版每天有消息条数限制，够日常提醒用）。
+
+**方式二：企业微信群机器人（免费不限条数）**
+1. 下载“企业微信”App，注册一个免费企业（个人即可）；
+2. 建一个群（可以只有自己），添加**群机器人**，复制 Webhook 地址；
+3. 在仓库 Secrets 里新建 `WECOM_WEBHOOK`，粘贴 Webhook 地址。
+
+两个渠道都配置时优先用 Server酱。配置好之后，下次 daily-update 运行（或手动 Run workflow）就会生效。
+
 ## 本地运行（可选）
 
 需要 Python 3.10+，无需安装第三方库（全部用标准库）：
