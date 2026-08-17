@@ -9,6 +9,8 @@ const state = {
   chart: null, trendCharts: [], current: null, k: null, h: null,
   company: null, finChart: null, finGran: "annual", finKey: null,
   currentItem: null, tagFilter: null,
+  funds: [], fundSort: { k: "scale_now", asc: false },
+  fundSearch: "", view: "list", fundCurrent: null, fundChart: null,
 };
 
 const fmt = (v, d = 2) =>
@@ -16,13 +18,15 @@ const fmt = (v, d = 2) =>
 
 async function load() {
   try {
-    const [snap, b] = await Promise.all([
+    const [snap, b, fnd] = await Promise.all([
       fetch("data/snapshot.json").then((r) => r.json()),
       fetch("data/meta/boards.json").then((r) => r.json()),
+      fetch("data/funds.json").then((r) => r.json()).catch(() => null),
     ]);
     state.snapshot = snap;
     state.stocks = snap.items || [];
     state.boards = (b && b.boards) || [];
+    state.funds = (fnd && fnd.items) || [];
     const up = (snap.updated_at || "").replace("T", " ").slice(0, 16);
     $("#meta").textContent =
       "数据日期 " + snap.date + " · 更新于 " + up + " · 共 " + snap.total + " 只";
@@ -123,11 +127,14 @@ function renderBoards() {
 }
 
 function showView(name) {
-  ["list", "boards", "detail", "tag"].forEach((v) => {
-    $("#view-" + v).hidden = v !== name;
+  ["list", "boards", "detail", "tag", "funds", "fund-detail"].forEach((v) => {
+    const el = $("#view-" + v);
+    if (el) el.hidden = v !== name;
   });
   $("#tab-list").classList.toggle("active", name === "list");
   $("#tab-boards").classList.toggle("active", name === "boards");
+  $("#tab-funds").classList.toggle("active", name === "funds" || name === "fund-detail");
+  state.view = name;
   window.scrollTo(0, 0);
 }
 
@@ -563,6 +570,15 @@ function renderProfile(p) {
 
 function route() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/fund/")) {
+    openFundDetail(decodeURIComponent(h.slice(7)));
+    return;
+  }
+  if (h.startsWith("#/funds")) {
+    renderFunds();
+    showView("funds");
+    return;
+  }
   if (h.startsWith("#/stock/")) {
     openDetail(decodeURIComponent(h.slice(8)));
     return;
@@ -625,10 +641,150 @@ function renderRankings() {
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
 }
 
+// ---------------------------------------------------------------------------
+// 红利 / 宽基基金列表 + 净值走势
+// ---------------------------------------------------------------------------
+function fundVal(f, k) {
+  if (k && k.indexOf("scale_cells.") === 0) {
+    const cell = f.scale_cells && f.scale_cells[k.slice(12)];
+    return cell ? cell.value : null;
+  }
+  return f[k];
+}
+
+function fundFiltered() {
+  let list = state.funds;
+  const q = state.fundSearch.trim().toLowerCase();
+  if (q) {
+    list = list.filter((f) =>
+      f.code.includes(q) ||
+      (f.name || "").toLowerCase().includes(q) ||
+      (f.index_name || "").toLowerCase().includes(q) ||
+      (f.type || "").toLowerCase().includes(q)
+    );
+  }
+  const { k, asc } = state.fundSort;
+  list = list.slice().sort((a, b) => {
+    const va = fundVal(a, k), vb = fundVal(b, k);
+    const na = va === null || va === undefined || va === "";
+    const nb = vb === null || vb === undefined || vb === "";
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    if (typeof va === "string" || typeof vb === "string")
+      return asc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    return asc ? va - vb : vb - va;
+  });
+  return list;
+}
+
+function fundScaleCell(cell) {
+  if (!cell) return "—";
+  const d = cell.delta, p = cell.pct;
+  const cs = d > 0 ? "red" : d < 0 ? "green" : "";
+  const sign = d > 0 ? "+" : "";
+  return fmt(cell.value, 2) + ' <span class="' + cs + '">(' + sign + fmt(d, 2) +
+    ", " + sign + fmt(p, 2) + "%)</span>";
+}
+
+function fundRowHTML(f) {
+  const m = (v) => v == null ? "—" : (v > 0 ? "+" : "") + fmt(v);
+  const mc = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+  return `<tr data-code="${f.code}">
+    <td>${f.code}</td>
+    <td>${esc(f.name || "—")}</td>
+    <td>${f.type || "—"}</td>
+    <td>${esc(f.index_name || "—")}</td>
+    <td class="num ${mc(f.pct_1m)}">${m(f.pct_1m)}</td>
+    <td class="num ${mc(f.pct_3m)}">${m(f.pct_3m)}</td>
+    <td class="num ${mc(f.pct_6m)}">${m(f.pct_6m)}</td>
+    <td class="num ${mc(f.pct_12m)}">${m(f.pct_12m)}</td>
+    <td class="num">${f.div_count == null ? "—" : f.div_count}</td>
+    <td class="num">${fmt(f.div_ratio)}</td>
+    <td class="num">${fmt(f.pe)}</td>
+    <td class="num">${fmt(f.pb)}</td>
+    <td class="num">${fmt(f.scale_now, 2)}</td>
+    <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["1"])}</td>
+    <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["3"])}</td>
+    <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["6"])}</td>
+    <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["12"])}</td>
+  </tr>`;
+}
+
+function renderFunds() {
+  const tbody = $("#fund-table tbody");
+  if (!tbody) return;
+  const list = fundFiltered();
+  tbody.innerHTML = list.map(fundRowHTML).join("");
+  const info = [];
+  if (state.fundSearch.trim()) info.push("搜索：" + state.fundSearch.trim());
+  info.push("显示 " + list.length + " / " + state.funds.length + " 只");
+  $("#fund-info").textContent = info.join(" · ");
+  tbody.querySelectorAll("tr").forEach((tr) =>
+    tr.addEventListener("click", () => { location.hash = "#/fund/" + tr.dataset.code; })
+  );
+}
+
+async function openFundDetail(code) {
+  showView("fund-detail");
+  const it = state.funds.find((x) => x.code === code) || {};
+  state.fundCurrent = it;
+  $("#fd-title").textContent = (it.name || code) + " (" + code + ")";
+  $("#fd-sub").textContent =
+    "类型：" + (it.type || "—") +
+    " · 跟踪指数：" + (it.index_name || "—") +
+    " · 近12月分红 " + (it.div_count == null ? "—" : it.div_count) + " 次" +
+    " · 当前规模 " + (it.scale_now == null ? "—" : fmt(it.scale_now, 2) + " 亿");
+  try {
+    const d = await fetch("data/fund_nav/" + code + ".json").then((r) => r.json());
+    renderFundNav(d);
+  } catch (e) {
+    const el = $("#fd-chart");
+    if (el) el.innerHTML = '<div class="muted" style="padding:20px">暂无净值走势数据</div>';
+  }
+}
+
+function renderFundNav(d) {
+  const el = $("#fd-chart");
+  if (!el) return;
+  if (!d || !d.nav || !d.nav.length) {
+    el.innerHTML = '<div class="muted" style="padding:20px">暂无净值走势数据</div>';
+    return;
+  }
+  if (!state.fundChart) {
+    state.fundChart = echarts.init(el);
+    window.addEventListener("resize", () => state.fundChart && state.fundChart.resize());
+  }
+  const dates = d.nav.map((x) => x[0]);
+  const vals = d.nav.map((x) => x[1]);
+  state.fundChart.setOption({
+    animation: false,
+    grid: { left: 10, right: 14, top: 24, bottom: 44, containLabel: true },
+    tooltip: { trigger: "axis" },
+    xAxis: { type: "category", data: dates, axisLabel: { fontSize: 10, showMaxLabel: true } },
+    yAxis: { type: "value", scale: true, axisLabel: { fontSize: 10 } },
+    dataZoom: [
+      { type: "inside", start: 35, end: 100 },
+      { type: "slider", start: 35, end: 100, height: 16, bottom: 8 },
+    ],
+    series: [{
+      type: "line", data: vals, showSymbol: false, smooth: true,
+      lineStyle: { width: 1.5, color: "#1e5eff" },
+      areaStyle: { opacity: 0.06 },
+    }],
+  }, true);
+}
+
 function setupEvents() {
   $("#search").addEventListener("input", (e) => {
-    state.search = e.target.value;
-    renderList();
+    const q = e.target.value;
+    if (state.view === "funds" || state.view === "fund-detail") {
+      state.fundSearch = q;
+      renderFunds();
+    } else {
+      state.search = q;
+      renderList();
+    }
   });
   document.querySelectorAll("#stock-table th[data-k]").forEach((th) =>
     th.addEventListener("click", () => {
@@ -640,8 +796,18 @@ function setupEvents() {
   );
   $("#tab-list").addEventListener("click", () => { location.hash = "#/"; });
   $("#tab-boards").addEventListener("click", () => { location.hash = "#/boards"; });
+  $("#tab-funds").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
+  $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#tag-back").addEventListener("click", () => { location.hash = "#/"; });
+  document.querySelectorAll("#fund-table th[data-k]").forEach((th) =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.k;
+      if (state.fundSort.k === k) state.fundSort.asc = !state.fundSort.asc;
+      else state.fundSort = { k, asc: k === "code" || k === "name" || k === "type" || k === "index_name" };
+      renderFunds();
+    })
+  );
   ["ck-ma", "ck-boll", "ck-dmi"].forEach((id) =>
     document.getElementById(id).addEventListener("change", renderChart)
   );

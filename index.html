@@ -19,6 +19,7 @@
       <nav class="tabs">
         <button id="tab-list" class="active">股票列表</button>
         <button id="tab-boards">板块市值排名</button>
+        <button id="tab-funds">红利/宽基基金</button>
       </nav>
     </div>
   </header>
@@ -71,6 +72,36 @@
         </table>
       </div>
       <div class="muted">点击行业行可筛选下方股票列表</div>
+    </section>
+
+    <section id="view-funds" hidden>
+      <div class="table-wrap">
+        <table id="fund-table">
+          <thead>
+            <tr>
+              <th data-k="code">代码</th>
+              <th data-k="name">名称</th>
+              <th data-k="type">类型</th>
+              <th data-k="index_name">跟踪指数</th>
+              <th data-k="pct_1m" class="num">近1月%</th>
+              <th data-k="pct_3m" class="num">近3月%</th>
+              <th data-k="pct_6m" class="num">近6月%</th>
+              <th data-k="pct_12m" class="num">近12月%</th>
+              <th data-k="div_count" class="num">分红次数</th>
+              <th data-k="div_ratio" class="num">分红比率%</th>
+              <th data-k="pe" class="num">市盈率</th>
+              <th data-k="pb" class="num">市净率</th>
+              <th data-k="scale_now" class="num">当前规模(亿)</th>
+              <th data-k="scale_cells.1" class="num">1月前规模(亿)</th>
+              <th data-k="scale_cells.3" class="num">3月前规模(亿)</th>
+              <th data-k="scale_cells.6" class="num">6月前规模(亿)</th>
+              <th data-k="scale_cells.12" class="num">12月前规模(亿)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="fund-info" class="muted"></div>
     </section>
 
     <section id="view-detail" hidden>
@@ -182,6 +213,14 @@
         </table>
       </div>
       <div id="tag-info" class="muted"></div>
+    </section>
+
+    <section id="view-fund-detail" hidden>
+      <button id="back-fund" class="back">← 返回基金列表</button>
+      <h2 id="fd-title"></h2>
+      <div id="fd-sub" class="muted"></div>
+      <h3>单位净值走势</h3>
+      <div id="fd-chart"></div>
     </section>
   </main>
   <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 15:15 后自动更新</footer>

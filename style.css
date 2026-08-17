@@ -159,6 +159,16 @@ footer { text-align: center; padding: 18px 10px 30px; }
 /* 标签页 */
 #view-tag .back { margin-bottom: 8px; }
 
+/* 基金列表 / 净值走势 */
+#view-funds .table-wrap { font-size: 12.5px; }
+#view-funds th, #view-funds td { padding: 6px 8px; font-size: 12.5px; white-space: nowrap; }
+#fund-info { margin-top: 8px; }
+#view-fund-detail .back { margin-bottom: 8px; }
+#fd-chart {
+  height: 60vh; min-height: 360px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+
 @media (max-width: 640px) {
   th, td { padding: 6px 7px; font-size: 12px; }
   #chart { height: 58vh; min-height: 360px; }
