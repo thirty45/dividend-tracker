@@ -15,6 +15,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from pipeline import sources_market as sm  # noqa: E402
+from pipeline import company as comp  # noqa: E402
 
 
 def load_config():
@@ -126,6 +127,58 @@ def main():
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
     print("   K线完成 %d/%d" % (len(klines), len(codes)), flush=True)
+
+    # 抓取公司基本面（控股股东/分红/财务绩效/高管增减持/简介）
+    # 带缓存：仅在文件缺失或超过 company_cache_days 天才重抓，避免每日全量请求。
+    company_dir = os.path.join(data_root, "company")
+    os.makedirs(company_dir, exist_ok=True)
+    cache_days = cfg.get("company_cache_days", 30)
+    force_company = args.force
+    todo_company = []
+    for c in codes:
+        p = os.path.join(company_dir, c + ".json")
+        need = True
+        if not force_company and os.path.exists(p):
+            try:
+                with open(p, encoding="utf-8") as f:
+                    old = json.load(f)
+                upd = old.get("updated")
+                if upd:
+                    dt = datetime.datetime.fromisoformat(upd)
+                    if (datetime.datetime.now() - dt).days < cache_days:
+                        need = False
+            except Exception:  # noqa: BLE001
+                pass
+        if need:
+            todo_company.append(c)
+    print("5/5 抓取公司基本面（待更新 %d/%d，缓存 %d 天）..." %
+          (len(todo_company), len(codes), cache_days), flush=True)
+    done_c = [0]
+    cw = max(1, min(cfg.get("company_workers", 6), 8))
+
+    def _fetch_one(code):
+        try:
+            d = comp.fetch_company(code, name_map.get(code, code))
+            with open(os.path.join(company_dir, code + ".json"), "w",
+                      encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+            return code, None
+        except Exception as exc:  # noqa: BLE001
+            return code, str(exc)
+
+    if todo_company:
+        with ThreadPoolExecutor(max_workers=cw) as ex:
+            futs = {ex.submit(_fetch_one, c): c for c in todo_company}
+            for fut in as_completed(futs):
+                code, err = fut.result()
+                done_c[0] += 1
+                if err:
+                    print("   公司数据失败 %s: %s" % (code, err), flush=True)
+                if done_c[0] % 100 == 0:
+                    print("   公司数据进度 %d/%d" %
+                          (done_c[0], len(todo_company)), flush=True)
+    else:
+        print("   公司基本面均最新，跳过", flush=True)
 
     # 组装快照
     items = []

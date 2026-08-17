@@ -80,6 +80,70 @@
       <div id="chart"></div>
       <h3>指标历史</h3>
       <div id="trends" class="trends"></div>
+
+      <div id="company-info" class="company-info">
+        <h3>公司信息</h3>
+        <div id="ci-loading" class="muted">加载公司基本面数据中…</div>
+        <div id="ci-body" hidden>
+          <!-- 1. 控股股东 / 实际控制人 -->
+          <section class="ci-mod">
+            <h4>① 控股股东与实际控制人</h4>
+            <div id="ci-holders" class="ci-holders"></div>
+            <div class="table-wrap">
+              <table id="holder-table"><thead><tr>
+                <th>排名</th><th>股东名称</th><th class="num">持股数(股)</th>
+                <th class="num">持股比例</th><th>较上期</th>
+              </tr></thead><tbody></tbody></table>
+            </div>
+          </section>
+
+          <!-- 2. 分红数据 -->
+          <section class="ci-mod">
+            <h4>② 分红数据</h4>
+            <div id="ci-dividend-sum" class="ci-summary"></div>
+            <div class="table-wrap">
+              <table id="dividend-table"><thead><tr>
+                <th>年份</th><th class="num">分红总额(亿元)</th>
+                <th class="num">分红比率</th><th class="num">每股分红(元)</th>
+              </tr></thead><tbody></tbody></table>
+            </div>
+          </section>
+
+          <!-- 3. 财务绩效 -->
+          <section class="ci-mod">
+            <h4>③ 财务绩效指标</h4>
+            <p class="muted ci-hint">点击任一指标查看「柱状图(数值) + 折线图(同比增长率)」，可切换 年度 / 半年 / 季度 粒度。</p>
+            <div id="ci-finance"></div>
+            <div class="finance-chart-bar">
+              <div class="seg" id="fin-gran">
+                <button data-g="annual" class="active">年度</button>
+                <button data-g="half">半年</button>
+                <button data-g="quarter">季度</button>
+              </div>
+              <span id="fin-title" class="fin-title"></span>
+            </div>
+            <div id="finance-chart"></div>
+          </section>
+
+          <!-- 4. 高管增减持 -->
+          <section class="ci-mod">
+            <h4>④ 高管增减持</h4>
+            <div class="table-wrap">
+              <table id="exec-table"><thead><tr>
+                <th>日期</th><th>姓名</th><th>职务</th><th>方向</th>
+                <th class="num">变动股数</th><th class="num">成交均价</th>
+                <th class="num">变动金额(元)</th><th>原因</th>
+              </tr></thead><tbody></tbody></table>
+            </div>
+          </section>
+
+          <!-- 5. 公司简介 -->
+          <section class="ci-mod">
+            <h4>⑤ 公司简介</h4>
+            <div id="ci-profile" class="ci-profile"></div>
+          </section>
+        </div>
+      </div>
     </section>
   </main>
   <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 15:15 后自动更新</footer>

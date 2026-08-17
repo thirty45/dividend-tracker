@@ -7,6 +7,7 @@ const state = {
   sort: { k: "dy", asc: false },
   search: "", industry: "",
   chart: null, trendCharts: [], current: null, k: null, h: null,
+  company: null, finChart: null, finGran: "annual", finKey: null,
 };
 
 const fmt = (v, d = 2) =>
@@ -120,6 +121,10 @@ function showView(name) {
 async function openDetail(code) {
   showView("detail");
   state.current = code;
+  state.finGran = "annual";
+  state.finKey = null;
+  document.querySelectorAll("#fin-gran button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.g === "annual"));
   const it = state.stocks.find((x) => x.code === code) || {};
   $("#d-title").textContent = `${it.name || code} (${code})`;
   $("#d-sub").textContent =
@@ -136,6 +141,22 @@ async function openDetail(code) {
   state.h = h;
   renderChart();
   renderTrends(h);
+  loadCompany(code);
+}
+
+async function loadCompany(code) {
+  $("#ci-loading").hidden = false;
+  $("#ci-body").hidden = true;
+  state.company = null;
+  try {
+    const d = await fetch("data/company/" + code + ".json").then((r) => r.json());
+    state.company = d;
+    renderCompany(d);
+    $("#ci-loading").hidden = true;
+    $("#ci-body").hidden = false;
+  } catch (e) {
+    $("#ci-loading").textContent = "公司基本面数据暂不可用（可能尚未抓取）。";
+  }
 }
 
 function renderCards(it) {
@@ -337,6 +358,174 @@ function renderTrends(h) {
   });
 }
 
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function renderCompany(d) {
+  renderHolders(d.holders || {});
+  renderDividend(d.dividend || {});
+  renderFinance(d.finance || {});
+  renderExecutives(d.executives || []);
+  renderProfile(d.profile || {});
+}
+
+function renderHolders(h) {
+  const ctrl = h.controller || "—";
+  const cs = h.controller_shareholder || "—";
+  $("#ci-holders").innerHTML =
+    `<div class="holder-facts"><span><b>实际控制人</b>${esc(ctrl)}</span>` +
+    `<span><b>控股股东</b>${esc(cs)}</span></div>`;
+  const tb = $("#holder-table tbody");
+  tb.innerHTML = (h.top10 || []).map((x) => {
+    const chg = x.change == null ? "—" : String(x.change);
+    const ratio = x.ratio == null ? "—" : fmt(x.ratio) + "%";
+    const shares = x.shares == null ? "—" : Math.round(x.shares).toLocaleString();
+    return `<tr><td>${x.rank ?? "—"}</td><td>${esc(x.name || "—")}</td>` +
+      `<td class="num">${shares}</td><td class="num">${ratio}</td>` +
+      `<td>${esc(chg)}</td></tr>`;
+  }).join("");
+}
+
+function renderDividend(dd) {
+  const avg = dd.avg5 == null ? "—" : fmt(dd.avg5, 2) + " 亿元";
+  $("#ci-dividend-sum").innerHTML =
+    `<span class="pill">近5年平均分红额度：<b>${avg}</b></span>` +
+    `<span class="pill">历年分红记录：<b>${(dd.years || []).length}</b> 年</span>`;
+  const tb = $("#dividend-table tbody");
+  tb.innerHTML = (dd.years || []).map((y) => {
+    const tot = y.total_div == null ? "—" : fmt(y.total_div, 2);
+    const ratio = y.ratio == null ? "—" : fmt(y.ratio, 2) + "%";
+    const ps = y.per_share == null ? "—" : fmt(y.per_share, 3);
+    return `<tr><td>${y.year}</td><td class="num">${tot}</td>` +
+      `<td class="num">${ratio}</td><td class="num">${ps}</td></tr>`;
+  }).join("");
+}
+
+const FIN_GROUP_TITLES = { key: "关键指标", profit: "盈利能力", risk: "财务风险" };
+function renderFinance(fin) {
+  const groups = fin.groups || {};
+  const wrap = $("#ci-finance");
+  wrap.innerHTML = "";
+  for (const gkey of ["key", "profit", "risk"]) {
+    const items = groups[gkey] || [];
+    if (!items.length) continue;
+    const box = document.createElement("div");
+    box.className = "fin-group";
+    box.innerHTML = `<div class="fin-group-title">${FIN_GROUP_TITLES[gkey]}</div>`;
+    const tbl = document.createElement("table");
+    tbl.className = "fin-table";
+    tbl.innerHTML = `<thead><tr><th>指标</th><th class="num">年度</th>` +
+      `<th class="num">同比</th><th class="num">半年</th><th class="num">同比</th>` +
+      `<th class="num">季度</th><th class="num">同比</th></tr></thead><tbody>` +
+      items.map((it) => {
+        const cell = (o) => {
+          if (!o) return `<td class="num">—</td><td class="num">—</td>`;
+          const v = o.v == null ? "—" : fmt(o.v, 2);
+          let ycls = "num yoy", y = "—";
+          if (o.yoy != null) {
+            y = (o.yoy > 0 ? "+" : "") + fmt(o.yoy, 1) + "%";
+            ycls += o.yoy > 0 ? " red" : " green";
+          }
+          return `<td class="num">${v}</td><td class="${ycls}">${y}</td>`;
+        };
+        return `<tr data-key="${it.key}" data-name="${it.name}" data-unit="${it.unit}" class="fin-row">` +
+          `<td>${it.name}</td>${cell(it.annual)}${cell(it.half)}${cell(it.quarter)}</tr>`;
+      }).join("") + `</tbody>`;
+    box.appendChild(tbl);
+    wrap.appendChild(box);
+  }
+  wrap.querySelectorAll(".fin-row").forEach((tr) =>
+    tr.addEventListener("click", () => {
+      state.finKey = tr.dataset.key;
+      state.finName = tr.dataset.name;
+      state.finUnit = tr.dataset.unit;
+      renderFinanceChart();
+    })
+  );
+  const first = wrap.querySelector(".fin-row");
+  if (first) {
+    state.finKey = first.dataset.key;
+    state.finName = first.dataset.name;
+    state.finUnit = first.dataset.unit;
+    renderFinanceChart();
+  } else if (state.finChart) {
+    state.finChart.dispose(); state.finChart = null;
+  }
+}
+
+function granLabel(g) { return g === "annual" ? "年度" : g === "half" ? "半年" : "季度"; }
+
+function renderFinanceChart() {
+  const fin = state.company && state.company.finance;
+  if (!fin || !state.finKey) return;
+  const gran = state.finGran;
+  const series = (fin.periods || [])
+    .filter((p) => p.type === gran)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (!series.length) {
+    $("#fin-title").textContent = state.finName + "（" + granLabel(gran) + "：无数据）";
+    if (state.finChart) { state.finChart.dispose(); state.finChart = null; }
+    return;
+  }
+  const labels = series.map((p) => p.date);
+  const vals = series.map((p) => (p.vals[state.finKey] == null ? null : +p.vals[state.finKey].toFixed(2)));
+  const yoys = series.map((p) => (p.yoy[state.finKey] == null ? null : +p.yoy[state.finKey].toFixed(1)));
+  $("#fin-title").textContent = `${state.finName}（${granLabel(gran)}）单位：${state.finUnit || ""}`;
+  if (!state.finChart) {
+    state.finChart = echarts.init($("#finance-chart"));
+    window.addEventListener("resize", () => state.finChart && state.finChart.resize());
+  }
+  state.finChart.setOption({
+    animation: false,
+    legend: { data: ["数值", "同比增长率"], top: 0, textStyle: { fontSize: 11 } },
+    tooltip: { trigger: "axis" },
+    grid: { left: 10, right: 14, top: 34, bottom: 30, containLabel: true },
+    xAxis: { type: "category", data: labels, axisLabel: { fontSize: 10, rotate: labels.length > 8 ? 45 : 0 } },
+    yAxis: [
+      { type: "value", name: "数值", scale: true, axisLabel: { fontSize: 10 } },
+      { type: "value", name: "同比%", axisLabel: { fontSize: 10, formatter: "{value}%" } },
+    ],
+    series: [
+      { name: "数值", type: "bar", data: vals, itemStyle: { color: "#1e5eff" },
+        label: { show: vals.length <= 12, position: "top", fontSize: 10 } },
+      { name: "同比增长率", type: "line", yAxisIndex: 1, data: yoys, smooth: true,
+        symbol: "circle", symbolSize: 6, itemStyle: { color: "#e53935" }, lineStyle: { width: 2 } },
+    ],
+  }, true);
+}
+
+function renderExecutives(ex) {
+  const tb = $("#exec-table tbody");
+  if (!ex || !ex.length) { tb.innerHTML = `<tr><td colspan="8" class="muted">暂无高管增减持记录</td></tr>`; return; }
+  tb.innerHTML = ex.slice(0, 50).map((e) => {
+    const dir = e.direction === "增持" ? `<span class="red">增持</span>`
+      : e.direction === "减持" ? `<span class="green">减持</span>` : esc(e.direction || "—");
+    const sh = e.shares == null ? "—" : (e.shares > 0 ? "+" : "") + Math.round(e.shares).toLocaleString();
+    const price = e.price == null ? "—" : fmt(e.price, 2);
+    const amt = e.amount == null ? "—" : Math.round(e.amount).toLocaleString();
+    return `<tr><td>${e.date || "—"}</td><td>${esc(e.name || "—")}</td>` +
+      `<td>${esc(e.title || "—")}</td><td>${dir}</td>` +
+      `<td class="num">${sh}</td><td class="num">${price}</td>` +
+      `<td class="num">${amt}</td><td>${esc(e.reason || "—")}</td></tr>`;
+  }).join("");
+}
+
+function renderProfile(p) {
+  if (!p || !p.org_name) { $("#ci-profile").innerHTML = `<div class="muted">暂无简介</div>`; return; }
+  const row = (k, v) => v ? `<div class="pf-row"><span class="pf-k">${k}</span><span class="pf-v">${esc(v)}</span></div>` : "";
+  const web = p.website ? `<a href="${esc(p.website)}" target="_blank" rel="noopener">${esc(p.website)}</a>` : "";
+  $("#ci-profile").innerHTML =
+    `<div class="pf-head">${esc(p.org_name)}${p.org_name_en ? ' <span class="muted">(' + esc(p.org_name_en) + ")</span>" : ""}</div>` +
+    row("法定代表人", p.legal_person) + row("董事长", p.chairman) + row("总经理", p.president) +
+    row("董事会秘书", p.secretary) + row("所属行业", p.industry) + row("上市板块", p.listing) +
+    row("员工人数", p.emp_num == null ? "" : Math.round(p.emp_num).toLocaleString() + " 人") +
+    row("注册地址", p.reg_address || p.address) + row("公司官网", web) +
+    (p.business_scope ? `<div class="pf-row"><span class="pf-k">经营范围</span><span class="pf-v">${esc(p.business_scope)}</span></div>` : "") +
+    (p.profile ? `<div class="pf-profile">${esc(p.profile)}</div>` : "");
+}
+
 function setupEvents() {
   $("#search").addEventListener("input", (e) => {
     state.search = e.target.value;
@@ -355,6 +544,14 @@ function setupEvents() {
   $("#back").addEventListener("click", () => showView("list"));
   ["ck-ma", "ck-boll", "ck-dmi"].forEach((id) =>
     document.getElementById(id).addEventListener("change", renderChart)
+  );
+  document.querySelectorAll("#fin-gran button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#fin-gran button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.finGran = b.dataset.g;
+      renderFinanceChart();
+    })
   );
 }
 

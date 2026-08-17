@@ -1,0 +1,39 @@
+name: build-company
+
+on:
+  workflow_dispatch:
+  # 可选：每季度自动重建一次公司基本面（取消下一行注释即可启用）
+  # schedule:
+  #   - cron: '0 18 1 1,4,7,10 *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-update
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: 重建全部公司基本面数据
+        run: python pipeline/build_company.py
+
+      - name: 提交公司数据
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/company
+          git diff --cached --quiet || git commit -m "chore: 重建公司基本面数据 $(date -u +%F)"
+          git pull --rebase -X theirs origin main
+          git push

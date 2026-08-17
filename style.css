@@ -59,7 +59,82 @@ tbody tr:last-child td { border-bottom: none; }
 .trends .t h4 { margin: 4px 6px; font-size: 13px; }
 .trends .t div { height: 150px; }
 footer { text-align: center; padding: 18px 10px 30px; }
+
+/* ===== 公司信息模块 ===== */
+.company-info { margin-top: 6px; }
+.company-info > h3 { margin-top: 16px; }
+#ci-loading { padding: 16px 4px; }
+.ci-mod {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  margin-top: 12px;
+}
+.ci-mod > h4 { margin: 0 0 10px; font-size: 15px; }
+.ci-hint { margin: 0 0 10px; font-size: 12px; }
+
+/* 控股股东 / 实际控制人 */
+.ci-holders { margin-bottom: 10px; }
+.holder-facts { display: flex; flex-wrap: wrap; gap: 10px; }
+.holder-facts span {
+  flex: 1 1 200px; background: #fafbfc; border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 10px; font-size: 13px; color: var(--text);
+}
+.holder-facts b { display: block; color: var(--muted); font-weight: 500; font-size: 11px; margin-bottom: 2px; }
+
+/* 分红摘要 */
+.ci-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #eef3ff; color: #3557c4; border-radius: 20px;
+  padding: 5px 12px; font-size: 12px;
+}
+.pill b { color: #1e3aa0; font-size: 13px; }
+
+/* 财务绩效 */
+.fin-group { margin-bottom: 14px; }
+.fin-group:last-child { margin-bottom: 0; }
+.fin-group-title {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  border-left: 3px solid var(--blue); padding-left: 8px; margin-bottom: 6px;
+}
+.fin-table { white-space: nowrap; }
+.fin-row { cursor: pointer; }
+.fin-row:hover { background: #f0f4ff; }
+.fin-row.active { background: #e7eeff; }
+.yoy { font-weight: 500; }
+.finance-chart-bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 14px 0 4px;
+}
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button {
+  border: none; background: var(--card); color: var(--text);
+  padding: 6px 14px; cursor: pointer; font-size: 13px; border-right: 1px solid var(--line);
+}
+.seg button:last-child { border-right: none; }
+.seg button.active { background: var(--blue); color: #fff; }
+.fin-title { font-size: 13px; font-weight: 600; color: var(--text); }
+#finance-chart { height: 300px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+
+/* 高管增减持 */
+#exec-table .red, #exec-table .green { font-weight: 600; }
+
+/* 公司简介 */
+.ci-profile { font-size: 13px; }
+.pf-head { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+.pf-row { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.pf-row:last-of-type { border-bottom: none; }
+.pf-k { flex: 0 0 96px; color: var(--muted); }
+.pf-v { flex: 1; word-break: break-all; }
+.pf-v a { color: var(--blue); }
+.pf-profile { margin-top: 10px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
+
 @media (max-width: 640px) {
   th, td { padding: 6px 7px; font-size: 12px; }
   #chart { height: 58vh; min-height: 360px; }
+  .ci-mod { padding: 12px 12px 14px; }
+  #finance-chart { height: 260px; }
+  .pf-k { flex-basis: 72px; }
 }
