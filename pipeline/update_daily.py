@@ -29,6 +29,131 @@ def load_watchlist():
         return json.load(f)
 
 
+def _pct_from_bars(bars, n):
+    """最新收盘价相对 n 个交易日前收盘的涨跌幅(%)；数据不足返回 None。"""
+    if not bars or len(bars) <= n:
+        return None
+    last = bars[-1].get("c")
+    prev = bars[-1 - n].get("c")
+    if not last or not prev:
+        return None
+    return round((last - prev) / prev * 100.0, 2)
+
+
+def _month_end_series(bars):
+    """由日 K 线构造月末收盘价序列（升序）。当前月用最新一根收盘价代表。
+    返回 [(ym 'YYYY-MM', close), ...]。"""
+    if not bars:
+        return []
+    ms = {}
+    for b in bars:
+        d = b.get("d") or b.get("date") or ""
+        if len(d) < 7:
+            continue
+        ms[d[:7]] = b.get("c")  # 同月保留最后出现（已按日期升序）
+    return [(ym, ms[ym]) for ym in sorted(ms.keys())]
+
+
+def enrich_items(items, klines, company_dir, cfg):
+    """为每只股票计算派生字段并写回 item（就地修改）。
+
+    派生：近1月/近3月涨跌幅、每股收益、每股分红、连续分红年数、是否国有、
+    近5年平均市净率、近5年平均股息率、预期收益率①/②；并重写 tags。
+    """
+    today = datetime.date.today()
+    # 近5年窗口：从「今往前5个自然年」的1月起（如 2026 年取 2021-01 起，约68个月）。
+    five_start = "%d-01" % max(cfg.get("finance_start_year", 2016),
+                               today.year - 5)
+    for it in items:
+        code = it["code"]
+        close = it.get("close")
+        bars = klines.get(code) or []
+        it["pct_1m"] = _pct_from_bars(bars, 21)
+        it["pct_3m"] = _pct_from_bars(bars, 63)
+
+        comp = None
+        cp = os.path.join(company_dir, code + ".json")
+        if os.path.exists(cp):
+            try:
+                with open(cp, encoding="utf-8") as f:
+                    comp = json.load(f)
+            except Exception:  # noqa: BLE001
+                comp = None
+        holders = (comp or {}).get("holders", {}) or {}
+        is_soe = bool(holders.get("is_state_owned"))
+        it["is_soe"] = is_soe
+
+        finance = (comp or {}).get("finance", {}) or {}
+        periods = finance.get("periods", []) or []
+        annual = [p for p in periods if p.get("type") == "annual"]
+        eps = None
+        bps_by_year = {}
+        if annual:
+            la = max(annual, key=lambda p: p.get("date", ""))
+            eps = (la.get("vals") or {}).get("EPSJB")
+            for p in annual:
+                bps = (p.get("vals") or {}).get("BPS")
+                if bps is not None:
+                    bps_by_year[p.get("year")] = bps
+
+        div = (comp or {}).get("dividend", {}) or {}
+        years = div.get("years", []) or []
+        dps = None
+        for y in sorted(years, key=lambda x: x.get("year", 0), reverse=True):
+            if y.get("per_share") is not None:
+                dps = y["per_share"]
+                break
+        yset = set()
+        for y in years:
+            if (y.get("total_div") or 0) > 0 or y.get("per_share") is not None:
+                yset.add(y.get("year"))
+        div_years = 0
+        if yset:
+            ymax = max(yset)
+            while ymax in yset:
+                div_years += 1
+                ymax -= 1
+        it["dps"] = dps
+        it["div_years"] = div_years
+        it["eps"] = eps
+
+        # 月度序列 -> 近5年平均市净率 / 近5年平均股息率
+        mes = _month_end_series(bars)
+        dps_by_year = {y.get("year"): y.get("per_share") for y in years}
+        pb_list, dy_list = [], []
+        for ym, c in mes:
+            if ym < five_start or not c:
+                continue
+            y = int(ym[:4])
+            app_bps = None
+            for by in sorted(bps_by_year.keys()):
+                if by <= y:
+                    app_bps = bps_by_year[by]
+            if app_bps:
+                pb_list.append(c / app_bps)
+            d = dps_by_year.get(y)
+            if d is not None:
+                dy_list.append(d / c * 100.0)
+        it["pb5"] = round(sum(pb_list) / len(pb_list), 2) if pb_list else None
+        it["div_yield_5y"] = round(sum(dy_list) / len(dy_list), 2) if dy_list else None
+
+        dy = it.get("dy")
+        pb = it.get("pb")
+        if None not in (dy, pb, eps, dps, close) and close:
+            it["exp_ret"] = round(dy / 100.0 + (eps - dps) * pb / close, 2)
+            it["exp_ret_pb5"] = round(
+                dy / 100.0 + (eps - dps) * (it["pb5"] or pb) / close, 2)
+        else:
+            it["exp_ret"] = None
+            it["exp_ret_pb5"] = None
+
+        tags = [t for t in (it.get("tags") or []) if t != "基金持仓"]
+        if is_soe and "国有企业" not in tags:
+            tags.append("国有企业")
+        it["tags"] = tags
+    return items
+
+
 def main():
     if sys.stdout and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -202,6 +327,9 @@ def main():
             "industry": v.get("BOARD_NAME"),
             "tags": s.get("tags", []),
         })
+    # 派生字段：涨跌幅/国企/股息率均值/预期收益率/标签重写
+    enrich_items(items, klines, company_dir, cfg)
+
     items.sort(key=lambda x: -(x["dy"] if x["dy"] is not None else -1))
 
     # 板块市值排名

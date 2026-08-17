@@ -8,6 +8,7 @@ const state = {
   search: "", industry: "",
   chart: null, trendCharts: [], current: null, k: null, h: null,
   company: null, finChart: null, finGran: "annual", finKey: null,
+  currentItem: null, tagFilter: null,
 };
 
 const fmt = (v, d = 2) =>
@@ -25,8 +26,7 @@ async function load() {
     const up = (snap.updated_at || "").replace("T", " ").slice(0, 16);
     $("#meta").textContent =
       "数据日期 " + snap.date + " · 更新于 " + up + " · 共 " + snap.total + " 只";
-    renderList();
-    renderBoards();
+    route();
   } catch (e) {
     $("#list-info").textContent = "数据加载失败：" + e.message;
   }
@@ -60,31 +60,44 @@ function filtered() {
   return list;
 }
 
+function stockRowHTML(s) {
+  const pct = s.pct == null ? null : Number(s.pct);
+  const pctCls = pct > 0 ? "red" : pct < 0 ? "green" : "";
+  const pctTxt = pct == null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
+  const m = (v) => v == null ? "—" : (v > 0 ? "+" : "") + fmt(v);
+  const mc = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+  const tags = (s.tags || []).filter((t) => t !== "基金持仓")
+    .map((t) => `<span class="tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("");
+  return `<tr data-code="${s.code}">
+    <td>${s.code}</td><td>${s.name || "—"}</td>
+    <td class="num">${fmt(s.close)}</td>
+    <td class="num ${pctCls}">${pctTxt}</td>
+    <td class="num ${mc(s.pct_1m)}">${m(s.pct_1m)}</td>
+    <td class="num ${mc(s.pct_3m)}">${m(s.pct_3m)}</td>
+    <td class="num">${fmt(s.dy)}</td>
+    <td class="num">${fmt(s.pe)}</td>
+    <td class="num">${fmt(s.pb)}</td>
+    <td class="num">${fmt(s.pb5)}</td>
+    <td class="num">${fmt(s.mv, 1)}</td>
+    <td class="num">${fmt(s.roe)}</td>
+    <td class="num ${mc(s.exp_ret)}">${m(s.exp_ret)}</td>
+    <td class="num ${mc(s.exp_ret_pb5)}">${m(s.exp_ret_pb5)}</td>
+    <td>${s.industry || "—"}</td><td>${tags}</td></tr>`;
+}
+
 function renderList() {
   const tbody = $("#stock-table tbody");
   const list = filtered();
-  tbody.innerHTML = list.map((s) => {
-    const pct = s.pct === null || s.pct === undefined ? null : Number(s.pct);
-    const pctCls = pct > 0 ? "red" : pct < 0 ? "green" : "";
-    const pctTxt = pct === null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
-    const tags = (s.tags || []).map((t) => `<span class="tag">${t}</span>`).join("");
-    return `<tr data-code="${s.code}">
-      <td>${s.code}</td><td>${s.name || "—"}</td>
-      <td class="num">${fmt(s.close)}</td>
-      <td class="num ${pctCls}">${pctTxt}</td>
-      <td class="num">${fmt(s.dy)}</td>
-      <td class="num">${fmt(s.pe)}</td>
-      <td class="num">${fmt(s.pb)}</td>
-      <td class="num">${fmt(s.mv, 1)}</td>
-      <td class="num">${fmt(s.roe)}</td>
-      <td>${s.industry || "—"}</td><td>${tags}</td></tr>`;
-  }).join("");
+  tbody.innerHTML = list.map(stockRowHTML).join("");
   const info = [];
   if (state.industry) info.push(`行业筛选：${state.industry}`);
   info.push(`显示 ${list.length} / ${state.stocks.length} 只`);
   $("#list-info").textContent = info.join(" · ");
   tbody.querySelectorAll("tr").forEach((tr) =>
-    tr.addEventListener("click", () => openDetail(tr.dataset.code))
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".tag")) return;
+      location.hash = "#/stock/" + tr.dataset.code;
+    })
   );
 }
 
@@ -110,7 +123,7 @@ function renderBoards() {
 }
 
 function showView(name) {
-  ["list", "boards", "detail"].forEach((v) => {
+  ["list", "boards", "detail", "tag"].forEach((v) => {
     $("#view-" + v).hidden = v !== name;
   });
   $("#tab-list").classList.toggle("active", name === "list");
@@ -123,9 +136,10 @@ async function openDetail(code) {
   state.current = code;
   state.finGran = "annual";
   state.finKey = null;
+  const it = state.stocks.find((x) => x.code === code) || {};
+  state.currentItem = it;
   document.querySelectorAll("#fin-gran button").forEach((b) =>
     b.classList.toggle("active", b.dataset.g === "annual"));
-  const it = state.stocks.find((x) => x.code === code) || {};
   $("#d-title").textContent = `${it.name || code} (${code})`;
   $("#d-sub").textContent =
     "行业：" + (it.industry || "—") +
@@ -364,16 +378,18 @@ function esc(s) {
 }
 
 function renderCompany(d) {
+  const it = state.currentItem || {};
   renderHolders(d.holders || {});
-  renderDividend(d.dividend || {});
+  renderDividend(d.dividend || {}, it);
   renderFinance(d.finance || {});
   renderExecutives(d.executives || []);
   renderProfile(d.profile || {});
 }
 
 function renderHolders(h) {
-  const ctrl = h.controller || "—";
-  const cs = h.controller_shareholder || "—";
+  const soe = h.is_state_owned ? "（国有）" : "（民营）";
+  const ctrl = (h.controller || "—") + soe;
+  const cs = (h.controller_shareholder || "—") + soe;
   $("#ci-holders").innerHTML =
     `<div class="holder-facts"><span><b>实际控制人</b>${esc(ctrl)}</span>` +
     `<span><b>控股股东</b>${esc(cs)}</span></div>`;
@@ -388,9 +404,15 @@ function renderHolders(h) {
   }).join("");
 }
 
-function renderDividend(dd) {
+function renderDividend(dd, it) {
   const avg = dd.avg5 == null ? "—" : fmt(dd.avg5, 2) + " 亿元";
+  const dy = it && it.dy != null ? fmt(it.dy, 2) + "%" : "—";
+  const dy5 = it && it.div_yield_5y != null ? fmt(it.div_yield_5y, 2) + "%" : "—";
+  const dps = it && it.dps != null ? fmt(it.dps, 3) + " 元" : "—";
   $("#ci-dividend-sum").innerHTML =
+    `<span class="pill">股息率(TTM)：<b>${dy}</b></span>` +
+    `<span class="pill">近5年平均股息率：<b>${dy5}</b></span>` +
+    `<span class="pill">每股分红金额：<b>${dps}</b></span>` +
     `<span class="pill">近5年平均分红额度：<b>${avg}</b></span>` +
     `<span class="pill">历年分红记录：<b>${(dd.years || []).length}</b> 年</span>`;
   const tb = $("#dividend-table tbody");
@@ -404,58 +426,73 @@ function renderDividend(dd) {
 }
 
 const FIN_GROUP_TITLES = { key: "关键指标", profit: "盈利能力", risk: "财务风险" };
+
+function getFinChart() {
+  const el = $("#finance-chart");
+  let c = echarts.getInstanceByDom(el);
+  if (!c) c = echarts.init(el);
+  return c;
+}
+
+function granLabel(g) {
+  return { annual: "年报", half: "中报", q1: "一季报", q3: "三季报" }[g] || g;
+}
+
+function parkFinChart() {
+  const el = $("#finance-chart");
+  if (el && el.closest(".fin-table")) $("#fin-chart-holder").appendChild(el);
+}
+
 function renderFinance(fin) {
   const groups = fin.groups || {};
-  const wrap = $("#ci-finance");
-  wrap.innerHTML = "";
+  const gran = state.finGran;
+  let html = '<table class="fin-table"><tbody>';
   for (const gkey of ["key", "profit", "risk"]) {
     const items = groups[gkey] || [];
     if (!items.length) continue;
-    const box = document.createElement("div");
-    box.className = "fin-group";
-    box.innerHTML = `<div class="fin-group-title">${FIN_GROUP_TITLES[gkey]}</div>`;
-    const tbl = document.createElement("table");
-    tbl.className = "fin-table";
-    tbl.innerHTML = `<thead><tr><th>指标</th><th class="num">年度</th>` +
-      `<th class="num">同比</th><th class="num">半年</th><th class="num">同比</th>` +
-      `<th class="num">季度</th><th class="num">同比</th></tr></thead><tbody>` +
-      items.map((it) => {
-        const cell = (o) => {
-          if (!o) return `<td class="num">—</td><td class="num">—</td>`;
-          const v = o.v == null ? "—" : fmt(o.v, 2);
-          let ycls = "num yoy", y = "—";
-          if (o.yoy != null) {
-            y = (o.yoy > 0 ? "+" : "") + fmt(o.yoy, 1) + "%";
-            ycls += o.yoy > 0 ? " red" : " green";
-          }
-          return `<td class="num">${v}</td><td class="${ycls}">${y}</td>`;
-        };
-        return `<tr data-key="${it.key}" data-name="${it.name}" data-unit="${it.unit}" class="fin-row">` +
-          `<td>${it.name}</td>${cell(it.annual)}${cell(it.half)}${cell(it.quarter)}</tr>`;
-      }).join("") + `</tbody>`;
-    box.appendChild(tbl);
-    wrap.appendChild(box);
+    html += `<tr class="fin-group-row"><td colspan="2">${FIN_GROUP_TITLES[gkey]}</td></tr>`;
+    for (const it of items) {
+      const o = it[gran] || {};
+      const v = o.v == null ? "—" : fmt(o.v, 2);
+      let y = "", ycls = "";
+      if (o.yoy != null) {
+        y = " (" + (o.yoy > 0 ? "+" : "") + fmt(o.yoy, 1) + "%)";
+        ycls = o.yoy > 0 ? " red" : " green";
+      }
+      const unit = it.unit ? ` <span class="fin-unit">${esc(it.unit)}</span>` : "";
+      html += `<tr class="fin-row" data-key="${it.key}" data-name="${esc(it.name)}" data-unit="${esc(it.unit || "")}">` +
+        `<td>${it.name}${unit}</td>` +
+        `<td class="num">${v}<span class="${ycls} fin-yoy">${y}</span></td></tr>`;
+    }
   }
+  html += "</tbody></table>";
+  const wrap = $("#ci-finance");
+  wrap.innerHTML = html;
   wrap.querySelectorAll(".fin-row").forEach((tr) =>
-    tr.addEventListener("click", () => {
-      state.finKey = tr.dataset.key;
-      state.finName = tr.dataset.name;
-      state.finUnit = tr.dataset.unit;
-      renderFinanceChart();
-    })
+    tr.addEventListener("click", () => selectMetric(tr))
   );
   const first = wrap.querySelector(".fin-row");
-  if (first) {
-    state.finKey = first.dataset.key;
-    state.finName = first.dataset.name;
-    state.finUnit = first.dataset.unit;
-    renderFinanceChart();
-  } else if (state.finChart) {
-    state.finChart.dispose(); state.finChart = null;
-  }
+  if (first) selectMetric(first);
+  else getFinChart().clear();
 }
 
-function granLabel(g) { return g === "annual" ? "年度" : g === "half" ? "半年" : "季度"; }
+function selectMetric(tr) {
+  parkFinChart();
+  document.querySelectorAll(".fin-chart-row").forEach((r) => r.remove());
+  document.querySelectorAll(".fin-row").forEach((x) => x.classList.remove("active"));
+  tr.classList.add("active");
+  state.finKey = tr.dataset.key;
+  state.finName = tr.dataset.name;
+  state.finUnit = tr.dataset.unit;
+  const td = document.createElement("td");
+  td.colSpan = 2;
+  const slot = document.createElement("tr");
+  slot.className = "fin-chart-row";
+  slot.appendChild(td);
+  tr.parentNode.insertBefore(slot, tr.nextSibling);
+  td.appendChild($("#finance-chart"));
+  renderFinanceChart();
+}
 
 function renderFinanceChart() {
   const fin = state.company && state.company.finance;
@@ -466,18 +503,15 @@ function renderFinanceChart() {
     .sort((a, b) => a.date.localeCompare(b.date));
   if (!series.length) {
     $("#fin-title").textContent = state.finName + "（" + granLabel(gran) + "：无数据）";
-    if (state.finChart) { state.finChart.dispose(); state.finChart = null; }
+    getFinChart().clear();
     return;
   }
   const labels = series.map((p) => p.date);
   const vals = series.map((p) => (p.vals[state.finKey] == null ? null : +p.vals[state.finKey].toFixed(2)));
   const yoys = series.map((p) => (p.yoy[state.finKey] == null ? null : +p.yoy[state.finKey].toFixed(1)));
   $("#fin-title").textContent = `${state.finName}（${granLabel(gran)}）单位：${state.finUnit || ""}`;
-  if (!state.finChart) {
-    state.finChart = echarts.init($("#finance-chart"));
-    window.addEventListener("resize", () => state.finChart && state.finChart.resize());
-  }
-  state.finChart.setOption({
+  const c = getFinChart();
+  c.setOption({
     animation: false,
     legend: { data: ["数值", "同比增长率"], top: 0, textStyle: { fontSize: 11 } },
     tooltip: { trigger: "axis" },
@@ -494,6 +528,7 @@ function renderFinanceChart() {
         symbol: "circle", symbolSize: 6, itemStyle: { color: "#e53935" }, lineStyle: { width: 2 } },
     ],
   }, true);
+  c.resize();
 }
 
 function renderExecutives(ex) {
@@ -526,6 +561,70 @@ function renderProfile(p) {
     (p.profile ? `<div class="pf-profile">${esc(p.profile)}</div>` : "");
 }
 
+function route() {
+  const h = location.hash || "#/";
+  if (h.startsWith("#/stock/")) {
+    openDetail(decodeURIComponent(h.slice(8)));
+    return;
+  }
+  if (h.startsWith("#/tag/")) {
+    renderTagView(decodeURIComponent(h.slice(6)));
+    return;
+  }
+  if (h.startsWith("#/boards")) {
+    renderBoards();
+    showView("boards");
+    return;
+  }
+  renderList();
+  renderRankings();
+  showView("list");
+}
+
+function renderTagView(tag) {
+  state.tagFilter = tag;
+  const list = state.stocks.filter((s) => (s.tags || []).includes(tag));
+  $("#tag-title").textContent = "标签：" + tag + "（" + list.length + " 只）";
+  const tbody = $("#tag-table tbody");
+  tbody.innerHTML = list.map(stockRowHTML).join("");
+  $("#tag-info").textContent = "显示 " + list.length + " 只";
+  tbody.querySelectorAll("tr").forEach((tr) =>
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".tag")) return;
+      location.hash = "#/stock/" + tr.dataset.code;
+    })
+  );
+  showView("tag");
+}
+
+function renderRankings() {
+  const box = $("#rankings");
+  if (!box) return;
+  const all = state.stocks;
+  const banks = all.filter((s) => (s.industry || "").includes("银行") && s.dy != null)
+    .sort((a, b) => b.dy - a.dy).slice(0, 10);
+  const cons = all.filter((s) => (s.div_years || 0) >= 5);
+  const up = cons.filter((s) => s.pct_1m != null).sort((a, b) => b.pct_1m - a.pct_1m).slice(0, 10);
+  const down = cons.filter((s) => s.pct_1m != null).sort((a, b) => a.pct_1m - b.pct_1m).slice(0, 10);
+  const block = (title, rows, key) => {
+    if (!rows.length) return "";
+    const items = rows.map((s, i) => {
+      const v = s[key];
+      const cls = v > 0 ? "red" : v < 0 ? "green" : "";
+      const txt = (v > 0 ? "+" : "") + fmt(v);
+      return `<li><span class="rk">${i + 1}</span>` +
+        `<span class="rc" data-code="${s.code}">${esc(s.name)}(${s.code})</span>` +
+        `<span class="rv num ${cls}">${txt}</span></li>`;
+    }).join("");
+    return `<div class="rank-block"><div class="rank-title">${title}</div><ol class="rank-list">${items}</ol></div>`;
+  };
+  box.innerHTML = block("银行股息率 Top10", banks, "dy") +
+    block("连续分红≥5年 · 近1月涨幅 Top10", up, "pct_1m") +
+    block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m");
+  box.querySelectorAll(".rc").forEach((el) =>
+    el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
+}
+
 function setupEvents() {
   $("#search").addEventListener("input", (e) => {
     state.search = e.target.value;
@@ -539,9 +638,10 @@ function setupEvents() {
       renderList();
     })
   );
-  $("#tab-list").addEventListener("click", () => showView("list"));
-  $("#tab-boards").addEventListener("click", () => showView("boards"));
-  $("#back").addEventListener("click", () => showView("list"));
+  $("#tab-list").addEventListener("click", () => { location.hash = "#/"; });
+  $("#tab-boards").addEventListener("click", () => { location.hash = "#/boards"; });
+  $("#back").addEventListener("click", () => { location.hash = "#/"; });
+  $("#tag-back").addEventListener("click", () => { location.hash = "#/"; });
   ["ck-ma", "ck-boll", "ck-dmi"].forEach((id) =>
     document.getElementById(id).addEventListener("change", renderChart)
   );
@@ -550,9 +650,15 @@ function setupEvents() {
       document.querySelectorAll("#fin-gran button").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       state.finGran = b.dataset.g;
-      renderFinanceChart();
+      if (state.company) renderFinance(state.company.finance || {});
     })
   );
+  // 标签点击 -> 站内标签页（事件委托，兼容列表/标签页）
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest && e.target.closest(".tag");
+    if (t && t.dataset.tag) location.hash = "#/tag/" + encodeURIComponent(t.dataset.tag);
+  });
+  window.addEventListener("hashchange", route);
 }
 
 setupEvents();

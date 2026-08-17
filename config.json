@@ -16,8 +16,9 @@
   "high_yield_min_mv": 10000000000,
   "dividend_years": 3,
   "kline_start": "20200101",
-  "history_keep": 400,
-  "workers": 8,
-  "company_cache_days": 30,
-  "company_workers": 6
+ "history_keep": 1400,
+ "workers": 8,
+ "company_cache_days": 30,
+ "company_workers": 6,
+ "finance_start_year": 2016
 }

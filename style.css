@@ -131,6 +131,34 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .pf-v a { color: var(--blue); }
 .pf-profile { margin-top: 10px; line-height: 1.7; color: var(--text); white-space: pre-wrap; }
 
+/* 同比括号内展示 + 单位 */
+.fin-yoy { font-size: 11px; margin-left: 4px; font-weight: 500; }
+.fin-unit { color: var(--muted); font-size: 11px; }
+.fin-group-row td { background: #fafbfc; font-weight: 600; color: var(--muted);
+  font-size: 12px; border-bottom: 1px solid var(--line); }
+.fin-chart-row td { padding: 0; }
+#fin-chart-holder { margin: 6px 0 2px; }
+#finance-chart { height: 280px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.fin-chart-row td #finance-chart { display: block; }
+
+/* 排名块 */
+.rankings { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.rank-block { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.rank-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+.rank-list { list-style: none; margin: 0; padding: 0; }
+.rank-list li { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+.rank-list .rk { flex: 0 0 18px; color: var(--muted); text-align: center; }
+.rank-list .rc { flex: 1; cursor: pointer; }
+.rank-list .rc:hover { color: var(--blue); text-decoration: underline; }
+.rank-list .rv { font-weight: 600; }
+
+/* 可点击标签 */
+.tag { cursor: pointer; }
+.tag:hover { background: #d8e2ff; }
+
+/* 标签页 */
+#view-tag .back { margin-bottom: 8px; }
+
 @media (max-width: 640px) {
   th, td { padding: 6px 7px; font-size: 12px; }
   #chart { height: 58vh; min-height: 360px; }

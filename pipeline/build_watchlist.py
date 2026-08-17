@@ -166,8 +166,8 @@ def main():
     out = []
     for code, st in sorted(stocks.items()):
         tags = []
-        if st.get("funds"):
-            tags.append("基金持仓")
+        # 注：「国有企业」标签改由 update_daily.py 依据公司基本面(is_state_owned)生成；
+        # 「基金持仓」标签不再生成（需求：删除该标签）。
         for t in (st.get("indices") or []):
             if t not in tags:
                 tags.append(t)

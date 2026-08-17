@@ -24,6 +24,7 @@
   </header>
   <main>
     <section id="view-list">
+      <div id="rankings" class="rankings"></div>
       <div class="table-wrap">
         <table id="stock-table">
           <thead>
@@ -32,11 +33,16 @@
               <th data-k="name">名称</th>
               <th data-k="close">现价</th>
               <th data-k="pct">涨跌幅%</th>
+              <th data-k="pct_1m" class="num">近1月%</th>
+              <th data-k="pct_3m" class="num">近3月%</th>
               <th data-k="dy" class="num">股息率TTM%</th>
               <th data-k="pe" class="num">市盈率TTM</th>
               <th data-k="pb" class="num">市净率</th>
+              <th data-k="pb5" class="num">近5年PB均值</th>
               <th data-k="mv" class="num">总市值(亿)</th>
               <th data-k="roe" class="num">ROE%</th>
+              <th data-k="exp_ret" class="num">预期收益①</th>
+              <th data-k="exp_ret_pb5" class="num">预期收益②(5年PB)</th>
               <th data-k="industry">行业</th>
               <th>标签</th>
             </tr>
@@ -112,17 +118,18 @@
           <!-- 3. 财务绩效 -->
           <section class="ci-mod">
             <h4>③ 财务绩效指标</h4>
-            <p class="muted ci-hint">点击任一指标查看「柱状图(数值) + 折线图(同比增长率)」，可切换 年度 / 半年 / 季度 粒度。</p>
+            <p class="muted ci-hint">点击任一指标查看「柱状图(数值) + 折线图(同比增长率)」，图表跟随在指标下方；可切换 年报 / 一季报 / 中报 / 三季报。</p>
             <div id="ci-finance"></div>
             <div class="finance-chart-bar">
               <div class="seg" id="fin-gran">
-                <button data-g="annual" class="active">年度</button>
-                <button data-g="half">半年</button>
-                <button data-g="quarter">季度</button>
+                <button data-g="annual" class="active">年报</button>
+                <button data-g="q1">一季报</button>
+                <button data-g="half">中报</button>
+                <button data-g="q3">三季报</button>
               </div>
               <span id="fin-title" class="fin-title"></span>
             </div>
-            <div id="finance-chart"></div>
+            <div id="fin-chart-holder"><div id="finance-chart"></div></div>
           </section>
 
           <!-- 4. 高管增减持 -->
@@ -144,6 +151,37 @@
           </section>
         </div>
       </div>
+    </section>
+
+    <section id="view-tag" hidden>
+      <button id="tag-back" class="back">← 返回列表</button>
+      <h2 id="tag-title"></h2>
+      <div class="table-wrap">
+        <table id="tag-table">
+          <thead>
+            <tr>
+              <th data-k="code">代码</th>
+              <th data-k="name">名称</th>
+              <th data-k="close">现价</th>
+              <th data-k="pct">涨跌幅%</th>
+              <th data-k="pct_1m" class="num">近1月%</th>
+              <th data-k="pct_3m" class="num">近3月%</th>
+              <th data-k="dy" class="num">股息率TTM%</th>
+              <th data-k="pe" class="num">市盈率TTM</th>
+              <th data-k="pb" class="num">市净率</th>
+              <th data-k="pb5" class="num">近5年PB均值</th>
+              <th data-k="mv" class="num">总市值(亿)</th>
+              <th data-k="roe" class="num">ROE%</th>
+              <th data-k="exp_ret" class="num">预期收益①</th>
+              <th data-k="exp_ret_pb5" class="num">预期收益②(5年PB)</th>
+              <th data-k="industry">行业</th>
+              <th>标签</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="tag-info" class="muted"></div>
     </section>
   </main>
   <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 15:15 后自动更新</footer>

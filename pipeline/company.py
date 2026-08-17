@@ -47,6 +47,21 @@ FIN_GROUPS = {
 }
 
 
+# 国有企业判定关键词（匹配实际控制人/控股股东名称）
+STATE_KEYWORDS = ("国资委", "国有", "国务院", "财政部", "国资", "汇金", "证金",
+                  "社保基金", "中国烟草", "中央汇金")
+
+# 财务绩效收录起始年（需求：2016 年至今）
+FIN_START_YEAR = 2016
+
+
+def _is_state_owned(name):
+    """实际控制人/控股股东名称含国资相关关键词即视为国有。"""
+    if not name:
+        return False
+    return any(k in name for k in STATE_KEYWORDS)
+
+
 def _num(v, div=1):
     """安全地把值除以 div 转成 float；None/空/异常返回 None。"""
     if v is None:
@@ -119,10 +134,14 @@ def fetch_finance(code):
             g = "annual"
         elif rtype in ("中报", "半年报"):
             g = "half"
-        elif rtype in ("一季报", "三季报"):
-            g = "quarter"
+        elif rtype in ("一季报",):
+            g = "q1"
+        elif rtype in ("三季报",):
+            g = "q3"
         else:
             g = "other"
+        if g == "other":
+            continue
         vals = {}
         for col, _, _, div in sum(FIN_GROUPS.values(), []):
             vals[col] = _num(r.get(col), div)
@@ -153,7 +172,7 @@ def fetch_finance(code):
             else:
                 p["yoy"][col] = None
 
-    # 组装分组展示（取各粒度最新一条）
+    # 组装分组展示：取各报告类型最新一条（一季报/中报/三季报/年报）
     def latest_of(g):
         cands = [p for p in periods if p["type"] == g]
         if not cands:
@@ -164,8 +183,8 @@ def fetch_finance(code):
     for gkey, items in FIN_GROUPS.items():
         for col, name, unit, _ in items:
             rec = {"key": col, "name": name, "unit": unit,
-                   "annual": None, "half": None, "quarter": None}
-            for g in ("annual", "half", "quarter"):
+                   "q1": None, "half": None, "q3": None, "annual": None}
+            for g in ("q1", "half", "q3", "annual"):
                 lp = latest_of(g)
                 if lp:
                     rec[g] = {
@@ -175,16 +194,12 @@ def fetch_finance(code):
                     }
             groups[gkey].append(rec)
 
-    # 仅保留最近若干期用于画图（按日期降序，最多 ~12 期）
+    # 保留全部报告期用于画图与历史回溯（2016 至今）
     periods_sorted = sorted(periods, key=lambda p: p["date"], reverse=True)
-    periods_out = []
-    for p in periods_sorted[:14]:
-        periods_out.append({
-            "date": p["date"], "year": p["year"], "type": p["type"],
-            "rtype": p["rtype"],
-            "vals": {k: p["vals"].get(k) for k, _, _, _ in sum(FIN_GROUPS.values(), [])},
-            "yoy": {k: p["yoy"].get(k) for k, _, _, _ in sum(FIN_GROUPS.values(), [])},
-        })
+    periods_out = [
+        {k: p.get(k) for k in ("date", "year", "type", "rtype", "vals", "yoy")}
+        for p in periods_sorted if p["year"] >= FIN_START_YEAR
+    ]
     return {"periods": periods_out, "groups": groups,
             "annual_netprofit": annual_netprofit}
 
@@ -210,6 +225,7 @@ def fetch_holders(code):
     controller_shareholder = top10[0]["name"] if top10 else None
     return {"controller": controller,
             "controller_shareholder": controller_shareholder,
+            "is_state_owned": _is_state_owned(controller or controller_shareholder),
             "top10": top10}
 
 
