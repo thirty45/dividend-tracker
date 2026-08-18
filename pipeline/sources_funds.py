@@ -19,15 +19,10 @@ EXCLUDE_NAMES = (
 
 
 def _ok_type(fund_type):
+    """只保留指数型-股票（被动/增强指数基金），剔除混合型/股票型等主动选股基金。"""
     if not fund_type:
         return False
-    if any(k in fund_type for k in ("债券", "货币", "理财")):
-        return False
-    return (
-        fund_type.startswith("指数型-股票")
-        or fund_type.startswith("混合型")
-        or fund_type.startswith("股票型")
-    )
+    return fund_type.startswith("指数型-股票")
 
 
 def _base_name(name):

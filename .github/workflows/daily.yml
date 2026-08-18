@@ -40,6 +40,11 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
 
+      - name: 构建可转债数据
+        run: python pipeline/cbonds.py
+        env:
+          PYTHONUNBUFFERED: '1'
+
       - name: 提交数据变更
         run: |
           git config user.name "github-actions[bot]"

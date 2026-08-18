@@ -180,7 +180,7 @@ def _fetch_kline_tencent(code, beg, end):
     for rng in [(beg, "2023-06-30"), ("2023-07-01", end)]:
         try:
             j = fetch_json(
-                "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
                 params={"param": "%s,day,%s,%s,1000,qfq"
                         % (sym, _norm_date(rng[0]), _norm_date(rng[1]))},
                 referer="https://gu.qq.com/", timeout=15,
@@ -206,6 +206,70 @@ def _fetch_kline_tencent(code, beg, end):
             out.append(b)
     out.sort(key=lambda b: b["d"])
     return out
+
+
+def _shift_date(s, days):
+    """日期字符串(YYYY-MM-DD)平移 N 天（简单按日加减，仅用于抓取窗口，容错即可）。"""
+    from datetime import datetime, timedelta
+    try:
+        dt = datetime.strptime(str(s), "%Y-%m-%d")
+    except ValueError:
+        return s
+    return (dt + timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def fetch_raw_ex_open(code, ex_date):
+    """取某只股票指定「除权日」的不复权开盘价 —— 配送股折算现金分红用。
+
+    注意：前复权K线会把除权日当天的价格也按「后续分红」调整（如 派能科技
+    2024-06-21 真实开盘 40.80，前复权显示 40.24），因此这里必须用不复权数据。
+    优先东财 push2his fqt=0 小窗口（带熔断），失败回退腾讯不复权 fqkline。"""
+    beg = _shift_date(ex_date, -2)
+    end = _shift_date(ex_date, 2)
+    # 1) 东财不复权（熔断：连续失败后直接跳过，避免拖慢整体）
+    if not _em_blocked():
+        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        for market in markets:
+            try:
+                j = fetch_json(KLINE_URL, params={
+                    "secid": "%d.%s" % (market, code),
+                    "fields1": "f1,f2,f3",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+                    "klt": "101", "fqt": "0",
+                    "beg": _norm_date(beg), "end": _norm_date(end)},
+                    referer="https://quote.eastmoney.com/",
+                    retries=2, delay=1.0, timeout=15)
+                for k in ((j.get("data") or {}).get("klines") or []):
+                    p = k.split(",")
+                    if len(p) >= 2 and p[0] == ex_date:  # f51日期,f52开
+                        try:
+                            _em_note(True)
+                            return float(p[1])
+                        except ValueError:
+                            _em_note(True)
+                            return None
+            except Exception:  # noqa: BLE001
+                continue
+        _em_note(False)
+    # 2) 腾讯不复权 fqkline（fq 参数留空 = 不复权，返回 day 数组）
+    mkt = "sh" if code.startswith(("6", "9", "5")) else "sz"
+    try:
+        j = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,%s,%s,20,"
+                    % (mkt + code, _norm_date(beg), _norm_date(end))},
+            referer="https://gu.qq.com/", timeout=15,
+            retries=2, delay=1.0)
+        d = (j.get("data") or {}).get(mkt + code) or {}
+        for row in (d.get("day") or []):
+            if len(row) >= 2 and row[0] == ex_date:
+                try:
+                    return float(row[1])
+                except ValueError:
+                    return None
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 _em_lock = threading.Lock()

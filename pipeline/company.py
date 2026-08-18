@@ -230,38 +230,81 @@ def fetch_holders(code):
 
 
 def fetch_dividend(code, annual_netprofit):
-    """分红数据：历年分红总额 + 分红比率 + 每股分红；近5年平均分红额度。"""
-    bf = _emweb(code, "BonusFinancing")
-    ln = bf.get("lnfhrz") or []   # 历年分红融资
-    fhyx = bf.get("fhyx") or []   # 分红实施预案/方案
-    # 每股分红：从 fhyx 的 IMPL_PLAN_PROFILE "10派X元" 解析，按年份取年内最大方案
-    # （避免只抓到中期分红而漏掉年度分红）
-    per_share_by_year = {}
-    for f in fhyx:
-        m = re.search(r"派([\d.]+)元", f.get("IMPL_PLAN_PROFILE") or "")
-        ym = (f.get("EX_DIVIDEND_DATE") or "")[:4]
-        if m and ym.isdigit():
-            v = float(m.group(1)) / 10.0  # "10派X元" = 每股 X/10 元
-            y = int(ym)
-            if y not in per_share_by_year or v > per_share_by_year[y]:
-                per_share_by_year[y] = v
+    """分红数据：按「报告期年度」归属（2025 年 = 2025 年报期宣告的分红，
+    而非 2025 年实际派发；派发日归属会把 2024 年报的分红错记到 2025 年）。
+
+    数据源：datacenter-web RPT_SHAREBONUS_DET（含 REPORT_DATE 报告期、
+    IMPL_PLAN_PROFILE 方案文本、PRETAX_BONUS_RMB 每10股派息、BONUS_RATIO/IT_RATIO
+    每10股送/转股数、EX_DIVIDEND_DATE 除权日）。
+
+    每个报告年度合并一条：每股现金分红=该年度各笔(中期+年度)合计；
+    送/转股比例=合计；方案文本=各笔合并；total_div=Σ(每股派息×总股本)。
+    配送股现金等价（除权后开盘价×每股配送股数）由 update_daily.py 用 K线补算为
+    ex_open / per_share_real。"""
+    rows = _dc("RPT_SHAREBONUS_DET", '(SECURITY_CODE="%s")' % code,
+               sort="REPORT_DATE", page_size=200)
+    by_year = {}
+    for r in rows:
+        plan = r.get("IMPL_PLAN_PROFILE") or ""
+        if not plan or "不分配" in plan or "不派" in plan:
+            continue
+        rp = (r.get("REPORT_DATE") or "")[:10]
+        if len(rp) != 10 or not rp[:4].isdigit():
+            continue
+        year = int(rp[:4])
+        per10 = _num(r.get("PRETAX_BONUS_RMB"))   # 每10股派息(元)
+        send10 = _num(r.get("BONUS_RATIO"))       # 每10股送(股)
+        trans10 = _num(r.get("IT_RATIO"))         # 每10股转增(股)
+        shares = _num(r.get("TOTAL_SHARES"))      # 总股本(股)
+        g = by_year.setdefault(year, {
+            "per_share": 0.0, "send_ratio": 0.0, "trans_ratio": 0.0,
+            "total_div": 0.0, "plans": [], "ex_dates": [], "has_st": False,
+        })
+        if per10 is not None:
+            g["per_share"] += per10 / 10.0
+            if shares:
+                g["total_div"] += per10 / 10.0 * shares
+        if send10:
+            g["send_ratio"] += send10 / 10.0
+        if trans10:
+            g["trans_ratio"] += trans10 / 10.0
+        if send10 or trans10:
+            g["has_st"] = True
+        if plan not in g["plans"]:
+            g["plans"].append(plan)
+        ex_date = (r.get("EX_DIVIDEND_DATE") or "")[:10]
+        if len(ex_date) == 10:
+            g["ex_dates"].append(ex_date)
     years = []
-    for r in ln:
-        y = r.get("STATISTICS_YEAR")
-        try:
-            y = int(y)
-        except (TypeError, ValueError):
-            continue
-        total_div = _num(r.get("TOTAL_DIVIDEND"), 1e8)  # 元 -> 亿
-        if total_div is None:
-            continue
+    for y in sorted(by_year.keys(), reverse=True):
+        g = by_year[y]
+        # 除权日：优先取该年度含送/转的那笔；否则取最后实施的一笔
+        ex_date = ""
+        if g["has_st"]:
+            for r in rows:
+                rp = (r.get("REPORT_DATE") or "")[:10]
+                if rp[:4] == str(y) and ((_num(r.get("BONUS_RATIO")) or 0) or
+                                         (_num(r.get("IT_RATIO")) or 0)):
+                    ex_date = (r.get("EX_DIVIDEND_DATE") or "")[:10]
+                    if len(ex_date) == 10:
+                        break
+        if not ex_date and g["ex_dates"]:
+            ex_date = g["ex_dates"][-1]
         npv = annual_netprofit.get(y)
-        ratio = round(total_div / npv * 100.0, 2) if npv else None
+        ratio = (round(g["total_div"] / 1e8 / npv * 100.0, 2)
+                 if npv and g["total_div"] else None)
         years.append({
             "year": y,
-            "total_div": round(total_div, 2),     # 亿
+            "report_date": "%d-12-31" % y,        # 报告期年度（合并键）
+            "total_div": round(g["total_div"] / 1e8, 2),   # 亿
             "ratio": ratio,                       # 分红比率 %
-            "per_share": per_share_by_year.get(y),
+            "per_share": round(g["per_share"], 4) or None,   # 每股现金分红(元)
+            "send_ratio": round(g["send_ratio"], 4) or None,  # 每股送股
+            "trans_ratio": round(g["trans_ratio"], 4) or None,  # 每股转增
+            "plan": "；".join(g["plans"]),
+            "ex_date": ex_date or None,           # 除权除息日
+            "ex_open": None,                      # 除权后开盘价（K线补算）
+            "per_share_real": None,               # 每股真实分红=现金+配送股折现（K线补算）
         })
     years.sort(key=lambda x: x["year"], reverse=True)
     # 近5年平均分红额度：仅统计已实施(总额>0)的年份

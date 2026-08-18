@@ -54,13 +54,57 @@ def _month_end_series(bars):
     return [(ym, ms[ym]) for ym in sorted(ms.keys())]
 
 
-def enrich_items(items, klines, company_dir, cfg):
+def _streak_down(bars, n=7):
+    """连续 n 个交易日收盘价逐日下跌（每日收盘 < 前一日收盘）。数据不足返回 False。"""
+    if not bars or len(bars) < n + 1:
+        return False
+    seg = bars[-(n + 1):]
+    return all(seg[i]["c"] < seg[i - 1]["c"] for i in range(1, len(seg)))
+
+
+def _streak_yin(bars, n=7):
+    """连续 n 个交易日收阴线（收盘价 < 开盘价）。数据不足返回 False。"""
+    if not bars or len(bars) < n:
+        return False
+    return all(b["c"] < b["o"] for b in bars[-n:])
+
+
+def _boll_lower(bars, n=20, k=2.0):
+    """布林带下轨序列（与 bars 等长）：n 日均线 - k×标准差（总体标准差）。
+    数据不足 n 根的位置返回 None。"""
+    closes = [b.get("c") for b in bars]
+    out = [None] * len(bars)
+    for i in range(len(bars)):
+        if i + 1 < n:
+            continue
+        win = closes[i - n + 1:i + 1]
+        if any(c is None for c in win):
+            continue
+        m = sum(win) / n
+        var = sum((x - m) ** 2 for x in win) / n
+        out[i] = m - k * (var ** 0.5)
+    return out
+
+
+def _streak_below_boll(bars, n=5, period=20, k=2.0):
+    """连续 n 个交易日收盘价低于布林带下轨。数据不足返回 False。"""
+    if not bars or len(bars) < period + n - 1:
+        return False
+    lowers = _boll_lower(bars, period, k)
+    return all(lowers[i] is not None and bars[i]["c"] < lowers[i]
+               for i in range(len(bars) - n, len(bars)))
+
+
+def enrich_items(items, klines, company_dir, cfg, raw_opens=None):
     """为每只股票计算派生字段并写回 item（就地修改）。
 
     派生：近1月/近3月涨跌幅、每股收益、每股分红、连续分红年数、是否国有、
     近5年平均市净率、近5年平均股息率、预期收益率①/②；并重写 tags。
+    raw_opens: {code: {ex_date: 不复权开盘价}} —— 配送股折算现金分红用
+    （前复权K线会把除权日价格按后续分红调整，必须用不复权价）。
     """
     today = datetime.date.today()
+    raw_opens = raw_opens or {}
     # 近5年窗口：从「今往前5个自然年」的1月起（如 2026 年取 2021-01 起，约68个月）。
     five_start = "%d-01" % max(cfg.get("finance_start_year", 2016),
                                today.year - 5)
@@ -70,6 +114,12 @@ def enrich_items(items, klines, company_dir, cfg):
         bars = klines.get(code) or []
         it["pct_1m"] = _pct_from_bars(bars, 21)
         it["pct_3m"] = _pct_from_bars(bars, 63)
+        # 近7日涨跌幅 + 连跌7天 + 连续7天阴线（首页排名框用）
+        it["pct_7d"] = _pct_from_bars(bars, 7)
+        it["down7"] = _streak_down(bars, 7)
+        it["yin7"] = _streak_yin(bars, 7)
+        # 连续5天跌破布林带下轨（20日 ± 2σ）
+        it["boll5"] = _streak_below_boll(bars, 5)
 
         comp = None
         cp = os.path.join(company_dir, code + ".json")
@@ -98,10 +148,34 @@ def enrich_items(items, klines, company_dir, cfg):
 
         div = (comp or {}).get("dividend", {}) or {}
         years = div.get("years", []) or []
+        # 配送股现金等价 = 除权后开盘价 × 每股配送股数（送股+转增）。
+        # 开盘价必须用「不复权」数据（raw_opens）：前复权K线会把除权日价格
+        # 按后续分红调整（如派能科技 2024-06-21 真实 40.80 vs 前复权 40.24）。
+        div_changed = False
+        raw = raw_opens.get(code) or {}
+        for y in years:
+            if (y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0):
+                ex_open = raw.get(y.get("ex_date")) if y.get("ex_date") else None
+                y["ex_open"] = ex_open
+                if ex_open:
+                    extra = ex_open * ((y.get("send_ratio") or 0) + (y.get("trans_ratio") or 0))
+                    y["per_share_real"] = round((y.get("per_share") or 0) + extra, 4)
+                else:
+                    y["per_share_real"] = y.get("per_share")
+                div_changed = True
+        if div_changed and comp:
+            try:
+                with open(cp, "w", encoding="utf-8") as f:
+                    json.dump(comp, f, ensure_ascii=False)
+            except Exception:  # noqa: BLE001
+                pass
         dps = None
         for y in sorted(years, key=lambda x: x.get("year", 0), reverse=True):
-            if y.get("per_share") is not None:
-                dps = y["per_share"]
+            v = y.get("per_share_real")
+            if v is None:
+                v = y.get("per_share")
+            if v is not None:
+                dps = v
                 break
         yset = set()
         for y in years:
@@ -136,6 +210,21 @@ def enrich_items(items, klines, company_dir, cfg):
                 dy_list.append(d / c * 100.0)
         it["pb5"] = round(sum(pb_list) / len(pb_list), 2) if pb_list else None
         it["div_yield_5y"] = round(sum(dy_list) / len(dy_list), 2) if dy_list else None
+
+        # 连续2年股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；年度股息率=每股分红/年末收盘价）
+        year_close = {}
+        for b in bars:
+            d = b.get("d") or b.get("date") or ""
+            if len(d) >= 4:
+                year_close[d[:4]] = b.get("c")  # 同年度保留最后（年末收盘）
+        dy_vals = []
+        for yr in (today.year - 1, today.year - 2):
+            c = year_close.get(str(yr))
+            if not c:
+                break
+            d = dps_by_year.get(yr)
+            dy_vals.append((d / c * 100.0) if d is not None else 0.0)
+        it["dy_bad2"] = len(dy_vals) == 2 and dy_vals[0] < 1.0 and dy_vals[1] < 1.0
 
         dy = it.get("dy")
         pb = it.get("pb")
@@ -305,6 +394,39 @@ def main():
     else:
         print("   公司基本面均最新，跳过", flush=True)
 
+    # 收集送转分红记录，抓「不复权」除权日开盘价（配送股折算现金分红用）
+    raw_opens = {}
+    need = []
+    for code in codes:
+        p = os.path.join(company_dir, code + ".json")
+        if not os.path.exists(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as f:
+                compd = json.load(f)
+        except Exception:  # noqa: BLE001
+            continue
+        for y in ((compd.get("dividend", {}) or {}).get("years", []) or []):
+            if ((y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0)) and y.get("ex_date"):
+                need.append((code, y["ex_date"]))
+    need = sorted(set(need))
+    if need:
+        print("抓不复权除权日开盘价 %d 条（送转分红折算）..." % len(need), flush=True)
+
+        def _ex_open(item):
+            code, exd = item
+            try:
+                return code, exd, sm.fetch_raw_ex_open(code, exd)
+            except Exception:  # noqa: BLE001
+                return code, exd, None
+
+        with ThreadPoolExecutor(max_workers=cw) as ex:
+            for code, exd, op in ex.map(_ex_open, need):
+                if op:
+                    raw_opens.setdefault(code, {})[exd] = op
+        got = sum(len(v) for v in raw_opens.values())
+        print("   成功 %d/%d" % (got, len(need)), flush=True)
+
     # 组装快照
     items = []
     for s in stocks:
@@ -328,7 +450,7 @@ def main():
             "tags": s.get("tags", []),
         })
     # 派生字段：涨跌幅/国企/股息率均值/预期收益率/标签重写
-    enrich_items(items, klines, company_dir, cfg)
+    enrich_items(items, klines, company_dir, cfg, raw_opens)
 
     items.sort(key=lambda x: -(x["dy"] if x["dy"] is not None else -1))
 

@@ -20,6 +20,7 @@
         <button id="tab-list" class="active">股票列表</button>
         <button id="tab-boards">板块市值排名</button>
         <button id="tab-funds">红利/宽基基金</button>
+        <button id="tab-cbonds">可转债</button>
       </nav>
     </div>
   </header>
@@ -30,8 +31,7 @@
         <table id="stock-table">
           <thead>
             <tr>
-              <th data-k="code">代码</th>
-              <th data-k="name">名称</th>
+              <th data-k="name">名称(代码)</th>
               <th data-k="close">现价</th>
               <th data-k="pct">涨跌幅%</th>
               <th data-k="pct_1m" class="num">近1月%</th>
@@ -79,8 +79,7 @@
         <table id="fund-table">
           <thead>
             <tr>
-              <th data-k="code">代码</th>
-              <th data-k="name">名称</th>
+              <th data-k="name">名称(代码)</th>
               <th data-k="type">类型</th>
               <th data-k="index_name">跟踪指数</th>
               <th data-k="pct_1m" class="num">近1月%</th>
@@ -102,6 +101,55 @@
         </table>
       </div>
       <div id="fund-info" class="muted"></div>
+    </section>
+
+    <section id="view-cbonds" hidden>
+      <div id="cb-pending-info" class="muted"></div>
+      <div class="table-wrap">
+        <table id="cb-table-pending">
+          <thead>
+            <tr>
+              <th>名称(代码)</th>
+              <th class="num">现价</th>
+              <th class="num">溢价率%</th>
+              <th>申购日期</th>
+              <th>上市日期</th>
+              <th>配售日</th>
+              <th class="num">配售(元/股)</th>
+              <th class="num">配1手需股(资金)</th>
+              <th class="num">配2手需股(资金)</th>
+              <th class="num">正股近5日%</th>
+              <th class="num">正股近10日%</th>
+              <th class="num">过会至今%</th>
+              <th>正股</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="cb-listed-info" class="muted"></div>
+      <div class="table-wrap">
+        <table id="cb-table-listed">
+          <thead>
+            <tr>
+              <th>名称(代码)</th>
+              <th class="num">现价</th>
+              <th class="num">溢价率%</th>
+              <th>申购日期</th>
+              <th>上市日期</th>
+              <th>配售日</th>
+              <th class="num">配售(元/股)</th>
+              <th class="num">配1手需股(资金)</th>
+              <th class="num">配2手需股(资金)</th>
+              <th class="num">正股近5日%</th>
+              <th class="num">正股近10日%</th>
+              <th class="num">过会至今%</th>
+              <th>正股</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </section>
 
     <section id="view-detail" hidden>
@@ -140,8 +188,9 @@
             <div id="ci-dividend-sum" class="ci-summary"></div>
             <div class="table-wrap">
               <table id="dividend-table"><thead><tr>
-                <th>年份</th><th class="num">分红总额(亿元)</th>
-                <th class="num">分红比率</th><th class="num">每股分红(元)</th>
+                <th>年份(报告期)</th><th>分红方案</th><th class="num">每股现金(元)</th>
+                <th class="num">配送股折现(元)</th><th class="num">每股真实分红(元)</th>
+                <th class="num">分红总额(亿元)</th><th class="num">分红比率</th>
               </tr></thead><tbody></tbody></table>
             </div>
           </section>
@@ -191,8 +240,7 @@
         <table id="tag-table">
           <thead>
             <tr>
-              <th data-k="code">代码</th>
-              <th data-k="name">名称</th>
+              <th data-k="name">名称(代码)</th>
               <th data-k="close">现价</th>
               <th data-k="pct">涨跌幅%</th>
               <th data-k="pct_1m" class="num">近1月%</th>

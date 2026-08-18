@@ -9,6 +9,8 @@
   --blue: #1e5eff;
 }
 * { box-sizing: border-box; }
+/* 防止页面级横向溢出；用 clip 而非 hidden，避免产生滚动容器导致 position:sticky 吸顶失效 */
+html, body { overflow-x: clip; }
 body {
   margin: 0;
   background: var(--bg);
@@ -38,11 +40,22 @@ main { max-width: 1100px; margin: 0 auto; padding: 14px; }
 .table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; white-space: nowrap; }
 th, td { padding: 7px 9px; border-bottom: 1px solid var(--line); text-align: left; }
-th { position: sticky; top: 0; background: #fafbfc; cursor: pointer; user-select: none; }
+th { background: #fafbfc; cursor: pointer; user-select: none; }
 th.num, td.num { text-align: right; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f0f4ff; }
 tbody tr:last-child td { border-bottom: none; }
+/* 列表/基金/转债表首列（名称(代码)）固定：横向滚动查看其他指标时保持可见 */
+#stock-table td:first-child, #tag-table td:first-child, #fund-table td:first-child,
+#cb-table-pending td:first-child, #cb-table-listed td:first-child {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--card);
+  box-shadow: 1px 0 0 var(--line);
+}
+#stock-table th:first-child, #tag-table th:first-child, #fund-table th:first-child,
+#cb-table-pending th:first-child, #cb-table-listed th:first-child {
+  position: sticky; left: 0; z-index: 6;
+}
 .red { color: var(--red); }
 .green { color: var(--green); }
 .tag { display: inline-block; margin: 1px 2px; padding: 1px 6px; border-radius: 10px;
@@ -151,6 +164,7 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .rank-list .rc { flex: 1; cursor: pointer; }
 .rank-list .rc:hover { color: var(--blue); text-decoration: underline; }
 .rank-list .rv { font-weight: 600; }
+.rank-list .rank-empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
 
 /* 可点击标签 */
 .tag { cursor: pointer; }

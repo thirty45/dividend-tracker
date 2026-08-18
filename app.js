@@ -11,6 +11,7 @@ const state = {
   currentItem: null, tagFilter: null,
   funds: [], fundSort: { k: "scale_now", asc: false },
   fundSearch: "", view: "list", fundCurrent: null, fundChart: null,
+  cbonds: { listed: [], pending: [] },
 };
 
 const fmt = (v, d = 2) =>
@@ -18,26 +19,46 @@ const fmt = (v, d = 2) =>
 
 async function load() {
   try {
-    const [snap, b, fnd] = await Promise.all([
+    const [snap, b, fnd, cbd] = await Promise.all([
       fetch("data/snapshot.json").then((r) => r.json()),
       fetch("data/meta/boards.json").then((r) => r.json()),
       fetch("data/funds.json").then((r) => r.json()).catch(() => null),
+      fetch("data/cbonds.json").then((r) => r.json()).catch(() => null),
     ]);
     state.snapshot = snap;
     state.stocks = snap.items || [];
     state.boards = (b && b.boards) || [];
     state.funds = (fnd && fnd.items) || [];
-    const up = (snap.updated_at || "").replace("T", " ").slice(0, 16);
+    state.cbonds = (cbd && cbd.listed) ? cbd : { listed: [], pending: [] };
+    const cbTotal = state.cbonds.listed.length + state.cbonds.pending.length;
     $("#meta").textContent =
-      "数据日期 " + snap.date + " · 更新于 " + up + " · 共 " + snap.total + " 只";
+      "数据日期 " + snap.date + " · 更新于(北京) " + toBJ(snap.updated_at) +
+      " · 股票 " + snap.total + " 只" +
+      (state.funds.length ? " · 基金 " + state.funds.length + " 只" : "") +
+      (cbTotal ? " · 转债 " + cbTotal + " 只" : "");
     route();
   } catch (e) {
     $("#list-info").textContent = "数据加载失败：" + e.message;
   }
 }
 
+// CI 生成的 updated_at 为 UTC（GitHub Actions 默认时区），转为北京时间显示
+function toBJ(s) {
+  const t = Date.parse((s || "").replace(" ", "T") + "Z");
+  if (isNaN(t)) return (s || "").replace("T", " ").slice(0, 16);
+  const d = new Date(t + 8 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getUTCFullYear() + "-" + p(d.getUTCMonth() + 1) + "-" + p(d.getUTCDate()) +
+    " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
+}
+
+// 过滤规则：删除 PE>150 或 PE<0 的股票；删除股息率连续2年<1%的股票（null/缺失保留）
+const stockOK = (s) =>
+  (s.pe == null || (s.pe <= 150 && s.pe >= 0)) && !s.dy_bad2;
+
 function filtered() {
   let list = state.stocks;
+  list = list.filter(stockOK);
   if (state.industry) list = list.filter((s) => s.industry === state.industry);
   const q = state.search.trim().toLowerCase();
   if (q) {
@@ -73,7 +94,7 @@ function stockRowHTML(s) {
   const tags = (s.tags || []).filter((t) => t !== "基金持仓")
     .map((t) => `<span class="tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("");
   return `<tr data-code="${s.code}">
-    <td>${s.code}</td><td>${s.name || "—"}</td>
+    <td class="stock-id">${esc(s.name || "—")}(${s.code})</td>
     <td class="num">${fmt(s.close)}</td>
     <td class="num ${pctCls}">${pctTxt}</td>
     <td class="num ${mc(s.pct_1m)}">${m(s.pct_1m)}</td>
@@ -127,13 +148,14 @@ function renderBoards() {
 }
 
 function showView(name) {
-  ["list", "boards", "detail", "tag", "funds", "fund-detail"].forEach((v) => {
+  ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
   $("#tab-list").classList.toggle("active", name === "list");
   $("#tab-boards").classList.toggle("active", name === "boards");
   $("#tab-funds").classList.toggle("active", name === "funds" || name === "fund-detail");
+  $("#tab-cbonds").classList.toggle("active", name === "cbonds");
   state.view = name;
   window.scrollTo(0, 0);
 }
@@ -419,7 +441,7 @@ function renderDividend(dd, it) {
   $("#ci-dividend-sum").innerHTML =
     `<span class="pill">股息率(TTM)：<b>${dy}</b></span>` +
     `<span class="pill">近5年平均股息率：<b>${dy5}</b></span>` +
-    `<span class="pill">每股分红金额：<b>${dps}</b></span>` +
+    `<span class="pill">每股分红(含配送股折现)：<b>${dps}</b></span>` +
     `<span class="pill">近5年平均分红额度：<b>${avg}</b></span>` +
     `<span class="pill">历年分红记录：<b>${(dd.years || []).length}</b> 年</span>`;
   const tb = $("#dividend-table tbody");
@@ -427,8 +449,14 @@ function renderDividend(dd, it) {
     const tot = y.total_div == null ? "—" : fmt(y.total_div, 2);
     const ratio = y.ratio == null ? "—" : fmt(y.ratio, 2) + "%";
     const ps = y.per_share == null ? "—" : fmt(y.per_share, 3);
-    return `<tr><td>${y.year}</td><td class="num">${tot}</td>` +
-      `<td class="num">${ratio}</td><td class="num">${ps}</td></tr>`;
+    // 配送股现金等价 = 除权后开盘价 × 每股配送股数（送股+转增）
+    const st = (y.send_ratio || 0) + (y.trans_ratio || 0);
+    const extra = (y.ex_open && st) ? fmt(y.ex_open * st, 3) : "—";
+    const real = y.per_share_real != null ? fmt(y.per_share_real, 3) : "—";
+    return `<tr><td>${y.year}</td><td class="plan-cell">${y.plan ? esc(y.plan) : "—"}</td>` +
+      `<td class="num">${ps}</td><td class="num">${extra}</td>` +
+      `<td class="num"><b>${real}</b></td><td class="num">${tot}</td>` +
+      `<td class="num">${ratio}</td></tr>`;
   }).join("");
 }
 
@@ -579,6 +607,11 @@ function route() {
     showView("funds");
     return;
   }
+  if (h.startsWith("#/cbonds")) {
+    renderCbonds();
+    showView("cbonds");
+    return;
+  }
   if (h.startsWith("#/stock/")) {
     openDetail(decodeURIComponent(h.slice(8)));
     return;
@@ -599,7 +632,7 @@ function route() {
 
 function renderTagView(tag) {
   state.tagFilter = tag;
-  const list = state.stocks.filter((s) => (s.tags || []).includes(tag));
+  const list = state.stocks.filter((s) => (s.tags || []).includes(tag) && stockOK(s));
   $("#tag-title").textContent = "标签：" + tag + "（" + list.length + " 只）";
   const tbody = $("#tag-table tbody");
   tbody.innerHTML = list.map(stockRowHTML).join("");
@@ -622,8 +655,19 @@ function renderRankings() {
   const cons = all.filter((s) => (s.div_years || 0) >= 5);
   const up = cons.filter((s) => s.pct_1m != null).sort((a, b) => b.pct_1m - a.pct_1m).slice(0, 10);
   const down = cons.filter((s) => s.pct_1m != null).sort((a, b) => a.pct_1m - b.pct_1m).slice(0, 10);
-  const block = (title, rows, key) => {
-    if (!rows.length) return "";
+  // 连跌7天 / 连续7天阴线 / 连续5天跌破布林下轨（按近7日涨跌幅升序，跌幅大的排前面）
+  const down7 = all.filter((s) => s.down7 && s.pct_7d != null)
+    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const yin7 = all.filter((s) => s.yin7 && s.pct_7d != null)
+    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const boll5 = all.filter((s) => s.boll5 && s.pct_7d != null)
+    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const block = (title, rows, key, emptyText) => {
+    if (!rows.length) {
+      if (!emptyText) return "";
+      return `<div class="rank-block"><div class="rank-title">${title}</div>` +
+        `<ol class="rank-list"><li class="rank-empty">${emptyText}</li></ol></div>`;
+    }
     const items = rows.map((s, i) => {
       const v = s[key];
       const cls = v > 0 ? "red" : v < 0 ? "green" : "";
@@ -636,7 +680,10 @@ function renderRankings() {
   };
   box.innerHTML = block("银行股息率 Top10", banks, "dy") +
     block("连续分红≥5年 · 近1月涨幅 Top10", up, "pct_1m") +
-    block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m");
+    block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m") +
+    block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +
+    block("连续7天阴线", yin7, "pct_7d", "今日暂无满足条件的股票") +
+    block("连续5天跌破布林下轨", boll5, "pct_7d", "今日暂无满足条件的股票");
   box.querySelectorAll(".rc").forEach((el) =>
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
 }
@@ -691,8 +738,7 @@ function fundRowHTML(f) {
   const m = (v) => v == null ? "—" : (v > 0 ? "+" : "") + fmt(v);
   const mc = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
   return `<tr data-code="${f.code}">
-    <td>${f.code}</td>
-    <td>${esc(f.name || "—")}</td>
+    <td>${esc(f.name || "—")}(${f.code})</td>
     <td>${f.type || "—"}</td>
     <td>${esc(f.index_name || "—")}</td>
     <td class="num ${mc(f.pct_1m)}">${m(f.pct_1m)}</td>
@@ -709,6 +755,51 @@ function fundRowHTML(f) {
     <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["6"])}</td>
     <td class="num">${fundScaleCell(f.scale_cells && f.scale_cells["12"])}</td>
   </tr>`;
+}
+
+// ===== 可转债 =====
+function cbRowHTML(b) {
+  const price = b.price == null ? "—" : Number(b.price).toFixed(3);
+  const prCls = b.premium_rt == null ? "" : b.premium_rt > 0 ? "red" : b.premium_rt < 0 ? "green" : "";
+  const pr = b.premium_rt == null ? "—" : (b.premium_rt > 0 ? "+" : "") + Number(b.premium_rt).toFixed(2) + "%";
+  const ration = b.ration == null ? "—" : Number(b.ration).toFixed(4);
+  const stock = b.stock_name
+    ? `${esc(b.stock_name)}(${esc(b.stock_code)})`
+    : "—";
+  // 配售1手/2手：需股数(所需资金 = 正股价 × 股数)
+  const need = (n, amt) =>
+    n == null ? "—" : `${n}股` + (amt != null ? `(${amt.toLocaleString()}元)` : "");
+  // 正股涨跌幅（近5/10工作日累计、过会至今）
+  const pct = (v) => v == null ? "—" : (v > 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+  const pctCls = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+  const rd = b.review_date || "—";
+  return `<tr data-code="${b.code}">
+    <td>${esc(b.name || "—")}(${b.code})</td>
+    <td class="num">${price}</td>
+    <td class="num ${prCls}">${pr}</td>
+    <td>${b.apply_date || "—"}</td>
+    <td>${b.list_date || "—"}</td>
+    <td>${b.record_date || "—"}</td>
+    <td class="num">${ration}</td>
+    <td class="num">${need(b.need1, b.amt1)}</td>
+    <td class="num">${need(b.need2, b.amt2)}</td>
+    <td class="num ${pctCls(b.pct5)}">${pct(b.pct5)}</td>
+    <td class="num ${pctCls(b.pct10)}">${pct(b.pct10)}</td>
+    <td class="num ${pctCls(b.pct_review)}" title="过会日 ${rd}">${pct(b.pct_review)}</td>
+    <td>${stock}</td>
+  </tr>`;
+}
+
+function renderCbonds() {
+  const c = state.cbonds || { listed: [], pending: [] };
+  const p = document.querySelector("#cb-table-pending tbody");
+  const l = document.querySelector("#cb-table-listed tbody");
+  if (p) p.innerHTML = c.pending.map(cbRowHTML).join("");
+  if (l) l.innerHTML = c.listed.map(cbRowHTML).join("");
+  const pi = document.getElementById("cb-pending-info");
+  const li = document.getElementById("cb-listed-info");
+  if (pi) pi.textContent = "已过会 · 未上市（含待申购 / 待上市）共 " + c.pending.length + " 只，按申购日期倒序";
+  if (li) li.textContent = "已上市 共 " + c.listed.length + " 只，按上市日期倒序";
 }
 
 function renderFunds() {
@@ -775,7 +866,49 @@ function renderFundNav(d) {
   }, true);
 }
 
+// 表头吸顶：页面下滚时把表头行钉在「顶部 header 框下方」（header 框本身 sticky 常驻最上方）
+function pinTableHeaders() {
+  const off = (document.querySelector("header") || { offsetHeight: 0 }).offsetHeight || 0;
+  document.querySelectorAll("#stock-table thead, #tag-table thead, #fund-table thead, #cb-table-pending thead, #cb-table-listed thead").forEach((thead) => {
+    const wrap = thead.closest(".table-wrap");
+    const r = wrap.getBoundingClientRect();
+    const th = thead.getBoundingClientRect();
+    if (r.top < off && r.bottom > off + th.height) {
+      thead.style.position = "relative";
+      thead.style.transform = "translateY(" + (off - r.top) + "px)";
+      thead.style.zIndex = "20"; // 盖过站点头部条(z10)
+      thead.style.background = "#fafbfc";
+      thead.style.boxShadow = "0 2px 6px rgba(0,0,0,.12)";
+    } else {
+      thead.style.transform = "";
+      thead.style.zIndex = "";
+      thead.style.background = "";
+      thead.style.boxShadow = "";
+    }
+  });
+}
+window.addEventListener("scroll", () => requestAnimationFrame(pinTableHeaders), { passive: true });
+window.addEventListener("resize", pinTableHeaders);
+
 function setupEvents() {
+  // 表格容器滚轮处理：鼠标在列表上「上下滚动」→ 列表左右平移看指标；
+  // 左右手势/横滑 → 表格上下翻行；无横向溢出的小表保持页面滚动。
+  document.querySelectorAll(".table-wrap").forEach((wrap) => {
+    wrap.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const horiz = wrap.scrollWidth > wrap.clientWidth;
+      const vert = wrap.scrollHeight > wrap.clientHeight;
+      if (Math.abs(e.deltaY) >= Math.abs(e.deltaX)) {
+        if (horiz) wrap.scrollLeft += e.deltaY;      // 上下滚轮 → 左右平移
+        else if (vert) wrap.scrollTop += e.deltaY;   // 仅纵向溢出 → 正常翻行
+        else window.scrollBy(0, e.deltaY);           // 无溢出 → 交给页面
+      } else {
+        if (vert) wrap.scrollTop += e.deltaX;        // 左右手势 → 上下翻行
+        else if (horiz) wrap.scrollLeft += e.deltaX;
+      }
+    }, { passive: false });
+  });
+  pinTableHeaders();
   $("#search").addEventListener("input", (e) => {
     const q = e.target.value;
     if (state.view === "funds" || state.view === "fund-detail") {
@@ -797,6 +930,7 @@ function setupEvents() {
   $("#tab-list").addEventListener("click", () => { location.hash = "#/"; });
   $("#tab-boards").addEventListener("click", () => { location.hash = "#/boards"; });
   $("#tab-funds").addEventListener("click", () => { location.hash = "#/funds"; });
+  $("#tab-cbonds").addEventListener("click", () => { location.hash = "#/cbonds"; });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
   $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#tag-back").addEventListener("click", () => { location.hash = "#/"; });

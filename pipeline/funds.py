@@ -302,6 +302,27 @@ def compute_one(item):
     return rec
 
 
+def dedup_broad(items):
+    """宽基基金同指数去重：每个指数只保留「当前规模最大」的一只代表基金。
+
+    红利类基金一只不删；无 index_name 的宽基不参与去重。
+    规模缺失按 0 处理；规模并列时保留先出现的（按代码序）。
+    """
+    best = {}  # index_name -> item（规模最大）
+    kept = []
+    for it in items:
+        if it.get("type") != "红利" and it.get("index_name"):
+            key = it["index_name"]
+            sc = it.get("scale_now") or 0
+            cur = best.get(key)
+            if cur is None or sc > (cur.get("scale_now") or 0):
+                best[key] = it
+        else:
+            kept.append(it)
+    kept.extend(best[k] for k in sorted(best))
+    return kept
+
+
 def build_funds(limit=None, workers=6, data_dir="data", progress=None):
     items = build_universe(limit=limit)
     if progress:
@@ -323,6 +344,8 @@ def build_funds(limit=None, workers=6, data_dir="data", progress=None):
             out_items.append(rec)
             if progress and done % 25 == 0:
                 progress("基金进度 %d/%d" % (done, len(items)))
+    out_items = [it for it in out_items if (it.get("scale_now") or 0) >= 0.5]
+    out_items = dedup_broad(out_items)
     out_items.sort(key=lambda x: (x.get("type") != "红利", x["code"]))
     payload = {
         "date": datetime.date.today().isoformat(),
