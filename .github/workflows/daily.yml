@@ -2,8 +2,10 @@ name: daily-update
 
 on:
   schedule:
-    # 每天 15:15（北京时间 = 07:15 UTC），收盘后更新一次
-    - cron: '15 7 * * *'
+    # 每天 16:30 和 21:30（北京时间 = 08:30 / 13:30 UTC）各跑一次：
+    # 16:30 保证当天估值与K线已发布；21:30 作为晚间补跑，防止数据延迟漏更新
+    - cron: '30 8 * * *'
+    - cron: '30 13 * * *'
   workflow_dispatch:
 
 permissions:

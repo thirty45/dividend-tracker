@@ -7,6 +7,7 @@ const state = {
   sort: { k: "dy", asc: false },
   search: "", industry: "",
   chart: null, trendCharts: [], current: null, k: null, h: null,
+  divs: null, kPeriod: "day", pyMap: null,
   company: null, finChart: null, finGran: "annual", finKey: null,
   currentItem: null, tagFilter: null,
   funds: [], fundSort: { k: "scale_now", asc: false },
@@ -17,19 +18,36 @@ const state = {
 const fmt = (v, d = 2) =>
   v === null || v === undefined || isNaN(v) ? "—" : Number(v).toFixed(d);
 
+// 股票/基金名称的拼音首字母（如 “长江电力” -> “cjdl”），供搜索用
+function initials(name) {
+  try {
+    if (window.pinyinPro) {
+      const arr = window.pinyinPro.pinyin(name, {
+        pattern: "first", toneType: "none", type: "array",
+      });
+      return (arr || []).join("").toLowerCase();
+    }
+  } catch (e) { /* 拼音库不可用时忽略 */ }
+  return "";
+}
+
 async function load() {
   try {
-    const [snap, b, fnd, cbd] = await Promise.all([
+    const [snap, b, fnd, cbd, ins] = await Promise.all([
       fetch("data/snapshot.json").then((r) => r.json()),
       fetch("data/meta/boards.json").then((r) => r.json()),
       fetch("data/funds.json").then((r) => r.json()).catch(() => null),
       fetch("data/cbonds.json").then((r) => r.json()).catch(() => null),
+      fetch("data/meta/insider_buys.json").then((r) => r.json()).catch(() => null),
     ]);
     state.snapshot = snap;
     state.stocks = snap.items || [];
     state.boards = (b && b.boards) || [];
     state.funds = (fnd && fnd.items) || [];
     state.cbonds = (cbd && cbd.listed) ? cbd : { listed: [], pending: [] };
+    state.insiders = (ins && ins.items) || [];
+    state.pyMap = new Map();
+    state.stocks.forEach((s) => state.pyMap.set(s.code, initials(s.name || "")));
     const cbTotal = state.cbonds.listed.length + state.cbonds.pending.length;
     $("#meta").textContent =
       "数据日期 " + snap.date + " · 更新于(北京) " + toBJ(snap.updated_at) +
@@ -66,6 +84,7 @@ function filtered() {
       (s) =>
         s.code.includes(q) ||
         (s.name || "").toLowerCase().includes(q) ||
+        ((state.pyMap && state.pyMap.get(s.code)) || "").includes(q) ||
         (s.industry || "").toLowerCase().includes(q) ||
         (s.tags || []).some((t) => t.toLowerCase().includes(q))
     );
@@ -176,12 +195,16 @@ async function openDetail(code) {
   renderCards(it);
   state.trendCharts.forEach((c) => c && c.dispose());
   state.trendCharts = [];
-  const [k, h] = await Promise.all([
+  const [k, h, dv] = await Promise.all([
     fetch("data/kline/" + code + ".json").then((r) => r.json()).catch(() => null),
     fetch("data/history/" + code + ".json").then((r) => r.json()).catch(() => null),
+    fetch("data/dividends/" + code + ".json").then((r) => r.json()).catch(() => null),
   ]);
   state.k = k;
   state.h = h;
+  state.divs = Array.isArray(dv)
+    ? dv.reduce((m, x) => { m[x.ex_date] = x; return m; }, {})
+    : null;
   renderChart();
   renderTrends(h);
   loadCompany(code);
@@ -287,6 +310,35 @@ function line(name, data, color, width = 1) {
   };
 }
 
+function isoWeek(dateStr) {
+  const dt = new Date(dateStr + "T00:00:00");
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7)); // 回到本周一
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return dt.getFullYear() + "-" + m + "-" + dd;
+}
+
+// 由日K聚合出周K/月K（open=首日开盘，close=末日收盘，high/low=区间极值，vol=合计）
+function aggregateBars(bars, period) {
+  const out = [];
+  let cur = null;
+  for (const b of bars) {
+    const k = period === "month" ? b.d.slice(0, 7) : isoWeek(b.d);
+    if (!cur || cur.k !== k) {
+      if (cur) out.push(cur.bar);
+      cur = { k, bar: { d: k, o: b.o, c: b.c, h: b.h, l: b.l, v: b.v } };
+    } else {
+      const x = cur.bar;
+      x.c = b.c;
+      x.h = Math.max(x.h, b.h);
+      x.l = Math.min(x.l, b.l);
+      x.v += b.v;
+    }
+  }
+  if (cur) out.push(cur.bar);
+  return out;
+}
+
 function renderChart() {
   const el = $("#chart");
   if (!state.k || !state.k.bars || !state.k.bars.length) {
@@ -297,19 +349,32 @@ function renderChart() {
     state.chart = echarts.init(el);
     window.addEventListener("resize", () => state.chart.resize());
   }
-  const bars = state.k.bars;
+  let bars = state.k.bars;
+  if (state.kPeriod !== "day") bars = aggregateBars(bars, state.kPeriod);
+  const zoomStart = Math.max(0, 100 - 120 / bars.length * 100); // 默认显示近约半年
   const dates = bars.map((b) => b.d);
   const ohlc = bars.map((b) => [b.o, b.c, b.l, b.h]);
   const vol = bars.map((b) => b.v);
   const showMA = $("#ck-ma").checked;
   const showB = $("#ck-boll").checked;
   const showD = $("#ck-dmi").checked;
+  // 除权除息日：日K在对应K线上标 S（悬停显示分红方案）
+  const markData = (state.divs && state.kPeriod === "day")
+    ? bars.map((b) => (state.divs[b.d] ? { coord: [b.d, b.l], value: "S" } : null))
+      .filter(Boolean)
+    : [];
   const series = [{
     name: "K线", type: "candlestick", data: ohlc,
     itemStyle: {
       color: "#d32f2f", color0: "#2e7d32",
       borderColor: "#d32f2f", borderColor0: "#2e7d32",
     },
+    markPoint: markData.length ? {
+      symbol: "circle", symbolSize: 15,
+      itemStyle: { color: "#b08500" },
+      label: { formatter: "S", color: "#fff", fontSize: 10, position: "inside" },
+      data: markData,
+    } : undefined,
   }];
   const legend = ["K线"];
   if (showMA) {
@@ -344,7 +409,23 @@ function renderChart() {
   const option = {
     animation: false,
     legend: { data: legend, top: 0, type: "scroll", textStyle: { fontSize: 11 } },
-    tooltip: { trigger: "axis", axisPointer: { type: "cross" } },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross" },
+      formatter: (params) => {
+        const arr = Array.isArray(params) ? params : [params];
+        let html = arr.map((p) => `${p.marker}${p.seriesName}：${p.value}`).join("<br>");
+        const idx = arr.length ? arr[0].dataIndex : -1;
+        const d = idx >= 0 && bars[idx] ? bars[idx].d : "";
+        const div = state.divs && state.divs[d];
+        if (div) {
+          html = "<b>除权除息 " + d + "</b><br>" + html +
+            "<br><span style='color:#b08500'>分红方案：" +
+            esc(div.profile || "—") + "</span>";
+        }
+        return html;
+      },
+    },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
     grid: [
       { left: 10, right: 14, top: 34, height: "52%", containLabel: true },
@@ -359,8 +440,8 @@ function renderChart() {
       { scale: true, gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false } },
     ],
     dataZoom: [
-      { type: "inside", xAxisIndex: [0, 1], start: 55, end: 100 },
-      { type: "slider", xAxisIndex: [0, 1], top: "90%", height: 16, start: 55, end: 100 },
+      { type: "inside", xAxisIndex: [0, 1], start: zoomStart, end: 100 },
+      { type: "slider", xAxisIndex: [0, 1], top: "90%", height: 16, start: zoomStart, end: 100 },
     ],
     series,
   };
@@ -627,6 +708,7 @@ function route() {
   }
   renderList();
   renderRankings();
+  renderInsiderRank();
   showView("list");
 }
 
@@ -688,6 +770,31 @@ function renderRankings() {
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
 }
 
+// 近1年高管增持排名：最近增持的排在最前（全宽表格）
+function renderInsiderRank() {
+  const box = $("#insider-rank");
+  if (!box) return;
+  const list = state.insiders || [];
+  if (!list.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const tbody = box.querySelector("tbody");
+  tbody.innerHTML = list.map((x) => {
+    const sh = x.shares == null ? "—" : Math.round(x.shares).toLocaleString();
+    const rt = x.ratio == null ? "—" : fmt(x.ratio, 2);
+    return `<tr data-code="${x.code}">
+      <td>${x.date || "—"}</td>
+      <td>${esc(x.name || "—")}(${x.code})</td>
+      <td>${esc(x.holder || "—")}</td>
+      <td>${esc(x.position || "—")}</td>
+      <td class="num">${sh}</td>
+      <td class="num">${rt}</td>
+      <td>${esc(x.reason || "—")}</td></tr>`;
+  }).join("");
+  tbody.querySelectorAll("tr").forEach((tr) =>
+    tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 红利 / 宽基基金列表 + 净值走势
 // ---------------------------------------------------------------------------
@@ -706,6 +813,7 @@ function fundFiltered() {
     list = list.filter((f) =>
       f.code.includes(q) ||
       (f.name || "").toLowerCase().includes(q) ||
+      initials(f.name || "").includes(q) ||
       (f.index_name || "").toLowerCase().includes(q) ||
       (f.type || "").toLowerCase().includes(q)
     );
@@ -739,6 +847,8 @@ function fundRowHTML(f) {
   const mc = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
   return `<tr data-code="${f.code}">
     <td>${esc(f.name || "—")}(${f.code})</td>
+    <td>${f.nav_date || "—"}</td>
+    <td class="num ${mc(f.chg_today)}">${m(f.chg_today)}</td>
     <td>${f.type || "—"}</td>
     <td>${esc(f.index_name || "—")}</td>
     <td class="num ${mc(f.pct_1m)}">${m(f.pct_1m)}</td>
@@ -944,6 +1054,14 @@ function setupEvents() {
   );
   ["ck-ma", "ck-boll", "ck-dmi"].forEach((id) =>
     document.getElementById(id).addEventListener("change", renderChart)
+  );
+  document.querySelectorAll("#k-period button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#k-period button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.kPeriod = b.dataset.p;
+      renderChart();
+    })
   );
   document.querySelectorAll("#fin-gran button").forEach((b) =>
     b.addEventListener("click", () => {

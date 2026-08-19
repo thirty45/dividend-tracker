@@ -160,6 +160,140 @@ def fetch_dividends_by_year(start_date, end_date, page_size=500):
     return out
 
 
+def probe_latest_bar_date(code):
+    """腾讯快速探针：返回某只股票最近一根日K线的日期（YYYY-MM-DD）。
+
+    用于判断“K线是否已更新到新的交易日”。东财估值数据可能晚于K线发布，
+    因此以K线探针为准决定是否刷新K线文件。
+    """
+    if code.startswith(("6", "9", "5")):
+        mkt = "sh"
+    elif code.startswith(("8", "4", "92")):
+        mkt = "bj"
+    else:
+        mkt = "sz"
+    sym = mkt + code
+    try:
+        j = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,,,6,qfq" % sym},
+            referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+        d = (j.get("data") or {}).get(sym) or {}
+        rows = d.get("qfqday") or d.get("day") or []
+        if rows:
+            return str(rows[-1][0])[:10]
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def fetch_dividend_details(start_date, end_date, page_size=500):
+    """区间内已实施分红明细 -> {code: [{ex_date, record_date, report_date,
+    profile, cash_per10}]}。用于K线图上标注除权除息日（S标志）。"""
+    out = {}
+    page = 1
+    while True:
+        j = fetch_json(DC_WEB_URL, params={
+            "reportName": "RPT_SHAREBONUS_DET",
+            "columns": ("SECURITY_CODE,EX_DIVIDEND_DATE,EQUITY_RECORD_DATE,"
+                        "REPORT_DATE,IMPL_PLAN_PROFILE,PRETAX_BONUS_RMB"),
+            "filter": "(EX_DIVIDEND_DATE>='%s')(EX_DIVIDEND_DATE<='%s')"
+                      % (start_date, end_date),
+            "pageSize": str(page_size), "pageNumber": str(page),
+            "sortColumns": "EX_DIVIDEND_DATE", "sortTypes": "1",
+            "source": "WEB", "client": "WEB"},
+            referer="https://data.eastmoney.com/", retries=4, delay=1.0)
+        res = j.get("result") or {}
+        data = res.get("data") or []
+        for r in data:
+            code = r.get("SECURITY_CODE")
+            ex = (r.get("EX_DIVIDEND_DATE") or "")[:10]
+            if not code or not ex:
+                continue
+            out.setdefault(code, []).append({
+                "ex_date": ex,
+                "record_date": (r.get("EQUITY_RECORD_DATE") or "")[:10],
+                "report_date": (r.get("REPORT_DATE") or "")[:10],
+                "profile": r.get("IMPL_PLAN_PROFILE") or "",
+                "cash_per10": r.get("PRETAX_BONUS_RMB"),
+            })
+        pages = res.get("pages") or 0
+        if page >= pages or not data:
+            break
+        page += 1
+    return out
+
+
+def fetch_insider_buys(start_date, page_size=500):
+    """近一年高管增持（二级市场买入类）-> [{code,name,date,holder,position,
+    shares,ratio,reason}]，按日期降序。
+
+    数据源：东财数据中心「高管持股变动」RPT_EXECUTIVE_HOLD_CHANGE。
+    仅保留 CHANGE_NUM>0（增持）且原因属于二级市场买入（排除首发上市/股权
+    激励/分红送转等非主动买入）。
+    """
+    reasons = ("竞价交易", "二级市场买卖", "集中竞价交易", "大宗交易", "集中交易")
+    out = []
+    page = 1
+    while True:
+        j = fetch_json(DC_WEB_URL, params={
+            "reportName": "RPT_EXECUTIVE_HOLD_CHANGE",
+            "columns": ("SECURITY_CODE,SECURITY_NAME_ABBR,CHANGE_DATE,"
+                        "HOLDER_NAME,EXECUTIVE_NAME,POSITION,CHANGE_NUM,"
+                        "CHANGE_RATIO,CHANGE_REASON"),
+            "filter": "(CHANGE_DATE>='%s')(CHANGE_NUM>0)" % start_date,
+            "pageSize": str(page_size), "pageNumber": str(page),
+            "sortColumns": "CHANGE_DATE", "sortTypes": "-1",
+            "source": "WEB", "client": "WEB"},
+            referer="https://data.eastmoney.com/", retries=4, delay=1.0)
+        res = j.get("result") or {}
+        data = res.get("data") or []
+        for r in data:
+            reason = r.get("CHANGE_REASON") or ""
+            if reason not in reasons:
+                continue
+            out.append({
+                "code": r.get("SECURITY_CODE"),
+                "name": r.get("SECURITY_NAME_ABBR") or "",
+                "date": (r.get("CHANGE_DATE") or "")[:10],
+                "holder": r.get("EXECUTIVE_NAME") or r.get("HOLDER_NAME") or "",
+                "position": r.get("POSITION") or "",
+                "shares": r.get("CHANGE_NUM"),
+                "ratio": r.get("CHANGE_RATIO"),
+                "reason": reason,
+            })
+        pages = res.get("pages") or 0
+        if page >= pages or not data:
+            break
+        page += 1
+    return out
+
+
+def fetch_fund_nav(code):
+    """天天基金历史净值接口 -> {date, nav, chg}（最新一条，payload 很小）。
+
+    用于每日轻量刷新基金“当天涨跌幅”，无需重新下载 pingzhongdata 大文件。
+    """
+    try:
+        j = fetch_json(
+            "https://api.fund.eastmoney.com/f10/lsjz",
+            params={"fundCode": code, "pageIndex": "1", "pageSize": "2",
+                    "startDate": "", "endDate": ""},
+            referer="https://fundf10.eastmoney.com/",
+            timeout=15, retries=3, delay=0.5)
+        lst = ((j.get("Data") or {}).get("LSJZList")) or []
+        for row in lst:
+            chg = row.get("JZZZL")
+            return {
+                "date": row.get("FSRQ") or "",
+                "nav": row.get("DWJZ"),
+                "chg": float(chg) if chg not in (None, "") else None,
+            }
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def _norm_date(s):
     s = str(s)
     if len(s) == 8:
@@ -168,7 +302,14 @@ def _norm_date(s):
 
 
 def _fetch_kline_tencent(code, beg, end):
-    """腾讯前复权日K线（分两段拉取，规避单次条数上限）。"""
+    """腾讯前复权日K线。
+
+    分段策略（每只2次请求，避免触发限流）：
+      1) 历史段：beg ~ 2023-12-31（接口单次最多约640根，自动截取最近640根）；
+      2) 最近段：count 接口返回最近约640根且包含最新交易日（区间接口会滞后1天，
+         因此最新交易日必须靠 count 接口补）。
+    两段按日期合并，最近段优先（同日期以后者为准）。
+    """
     if code.startswith(("6", "9", "5")):
         mkt = "sh"
     elif code.startswith(("8", "4", "92")):
@@ -177,35 +318,52 @@ def _fetch_kline_tencent(code, beg, end):
         mkt = "sz"
     sym = mkt + code
     bars = []
-    for rng in [(beg, "2023-06-30"), ("2023-07-01", end)]:
-        try:
-            j = fetch_json(
-                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-                params={"param": "%s,day,%s,%s,1000,qfq"
-                        % (sym, _norm_date(rng[0]), _norm_date(rng[1]))},
-                referer="https://gu.qq.com/", timeout=15,
-                retries=2, delay=1.0)
-            d = (j.get("data") or {}).get(sym) or {}
-            rows = d.get("qfqday") or d.get("day") or []
-            for row in rows:
-                if len(row) < 6:
-                    continue
-                try:
-                    bars.append({
-                        "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                        "h": float(row[3]), "l": float(row[4]),
-                        "v": float(row[5])})
-                except ValueError:
-                    continue
-        except Exception:  # noqa: BLE001
-            continue
-    seen, out = set(), []
+    try:
+        j = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,%s,2023-12-31,1000,qfq"
+                    % (sym, _norm_date(beg))},
+            referer="https://gu.qq.com/", timeout=15,
+            retries=2, delay=1.0)
+        d = (j.get("data") or {}).get(sym) or {}
+        rows = d.get("qfqday") or d.get("day") or []
+        for row in rows:
+            if len(row) < 6:
+                continue
+            try:
+                bars.append({
+                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                    "h": float(row[3]), "l": float(row[4]),
+                    "v": float(row[5])})
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    # 最近段：count 接口返回最近约640根且含最新交易日
+    try:
+        j2 = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,,,700,qfq" % sym},
+            referer="https://gu.qq.com/", timeout=15,
+            retries=2, delay=1.0)
+        d2 = (j2.get("data") or {}).get(sym) or {}
+        rows2 = d2.get("qfqday") or d2.get("day") or []
+        for row in rows2:
+            if len(row) < 6:
+                continue
+            try:
+                bars.append({
+                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                    "h": float(row[3]), "l": float(row[4]),
+                    "v": float(row[5])})
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    by_date = {}
     for b in bars:
-        if b["d"] not in seen:
-            seen.add(b["d"])
-            out.append(b)
-    out.sort(key=lambda b: b["d"])
-    return out
+        by_date[b["d"]] = b  # 同日期保留后出现（最近8根优先）
+    return [by_date[d] for d in sorted(by_date)]
 
 
 def _shift_date(s, days):
@@ -287,16 +445,22 @@ def _em_note(ok):
         _em_fail_streak = _em_fail_streak + 1 if not ok else 0
 
 
-def fetch_kline(code, beg="20200101", end="20500101"):
+def fetch_kline(code, beg="20200101", end="20500101", min_date=None):
     """前复权日K线 -> (name, [dict(d,o,h,l,c,v), ...])。
-    优先东方财富，连续失败自动切换腾讯备用源。"""
+    优先东方财富，连续失败自动切换腾讯备用源。
+    min_date: 期望覆盖到的最新日期；若返回数据未覆盖则视为陈旧，切换到备用源。"""
     if not _em_blocked():
         name, bars = _fetch_kline_em(code, beg, end)
-        if bars:
+        if bars and (min_date is None or bars[-1]["d"] >= min_date):
             _em_note(True)
             return name, bars
-        _em_note(False)
-    return "", _fetch_kline_tencent(code, beg, end)
+        if bars:
+            _em_note(False)
+    tbars = _fetch_kline_tencent(code, beg, end)
+    if min_date is not None and tbars and tbars[-1]["d"] < min_date:
+        print("   警告: %s K线最新仅到 %s（期望 %s）"
+              % (code, tbars[-1]["d"], min_date), flush=True)
+    return "", tbars
 
 
 def _fetch_kline_em(code, beg, end):

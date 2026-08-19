@@ -274,11 +274,22 @@ def compute_one(item):
     div_cnt, div_sum = dividend_stats(nav)
     last_nav = nav[-1]["y"] if nav else None
     div_ratio = round(div_sum / last_nav * 100, 2) if (div_sum and last_nav) else None
+    # 当天涨跌幅：最新净值 vs 上一净值
+    nav_date = None
+    chg_today = None
+    if len(nav) >= 2:
+        y0, y1 = nav[-2].get("y"), nav[-1].get("y")
+        if y0 and y1:
+            chg_today = round((y1 / y0 - 1) * 100, 2)
+        nav_date = datetime.datetime.fromtimestamp(
+            nav[-1].get("x", 0) / 1000).strftime("%Y-%m-%d")
     rec = {
         "code": code,
         "name": name,
         "type": ftype_tag,
         "index_name": idx_name,
+        "nav_date": nav_date,
+        "chg_today": chg_today,
         "pct_1m": pct_from_nav(nav, 1),
         "pct_3m": pct_from_nav(nav, 3),
         "pct_6m": pct_from_nav(nav, 6),

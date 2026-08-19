@@ -261,27 +261,43 @@ def main():
     os.makedirs(kline_dir, exist_ok=True)
     os.makedirs(hist_dir, exist_ok=True)
 
-    trade_date = sm.latest_trade_date()
-    if not trade_date:
-        print("无法获取最新交易日，退出")
-        return 1
-    if not args.force and os.path.exists(latest_file):
-        with open(latest_file, encoding="utf-8") as f:
-            prev = json.load(f)
-        if prev.get("date") == trade_date:
-            kline_files = [f for f in os.listdir(kline_dir)
-                           if f.endswith(".json")]
-            if kline_files:
-                print("数据已是最新(%s)，跳过" % trade_date)
-                return 0
-            print("快照已是最新但缺少K线文件，重新生成K线数据")
-
     watch = load_watchlist()
     stocks = watch["stocks"]
     if args.limit:
         stocks = stocks[:args.limit]
     codes = [s["code"] for s in stocks]
     name_map = {s["code"]: s["name"] for s in stocks}
+
+    trade_date = sm.latest_trade_date()
+    if not trade_date:
+        print("无法获取最新交易日，退出")
+        return 1
+    # K线最新日期探针：估值数据中心可能晚于K线发布，K线可能已更新到当天
+    probe_date = None
+    if codes:
+        try:
+            probe_date = sm.probe_latest_bar_date(codes[0])
+        except Exception as exc:  # noqa: BLE001
+            print("K线探针失败(将按估值日期更新): %s" % exc)
+    stored = {}
+    if os.path.exists(latest_file):
+        with open(latest_file, encoding="utf-8") as f:
+            stored = json.load(f)
+    kline_stale = bool(probe_date) and probe_date != (stored.get("kline_date") or "")
+    snapshot_stale = trade_date != (stored.get("date") or "")
+    print("估值交易日=%s 探针K线日=%s 已存(date=%s, kline=%s)"
+          % (trade_date, probe_date, stored.get("date"), stored.get("kline_date")))
+    if not args.force and not snapshot_stale and not kline_stale:
+        kline_files = [f for f in os.listdir(kline_dir)
+                       if f.endswith(".json")]
+        if kline_files:
+            print("数据已是最新(%s)，跳过" % trade_date)
+            return 0
+        print("日期一致但缺少K线文件，重新生成K线数据")
+    if kline_stale and not snapshot_stale:
+        print("K线已有新交易日(%s)，刷新K线；估值数据尚未更新则快照沿用 %s"
+              % (probe_date, trade_date))
+    kline_target = probe_date or trade_date
     print("股票池: %d 只（交易日 %s）" % (len(codes), trade_date))
 
     print("1/5 抓取全市场估值快照 ...")
@@ -308,7 +324,7 @@ def main():
             try:
                 with open(p, encoding="utf-8") as f:
                     old = json.load(f)
-                if old.get("date") == trade_date and old.get("bars"):
+                if old.get("bars") and old["bars"][-1].get("d", "") >= kline_target:
                     klines[c] = old["bars"]
                     continue
             except Exception:  # noqa: BLE001
@@ -318,7 +334,8 @@ def main():
           flush=True)
     done_count = [0]
     with ThreadPoolExecutor(max_workers=cfg.get("workers", 6)) as ex:
-        futs = {ex.submit(sm.fetch_kline, c, cfg["kline_start"]): c
+        futs = {ex.submit(sm.fetch_kline, c, cfg["kline_start"],
+                          "20500101", kline_target): c
                 for c in todo}
         now_iso = datetime.datetime.now().isoformat(timespec="seconds")
         for fut in as_completed(futs):
@@ -335,12 +352,22 @@ def main():
             path = os.path.join(kline_dir, c + ".json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"code": c, "name": name_map.get(c, ""),
-                           "date": trade_date, "updated": now_iso,
+                           "date": kline_target, "updated": now_iso,
                            "bars": klines[c]}, f, ensure_ascii=False)
             done_count[0] += 1
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
     print("   K线完成 %d/%d" % (len(klines), len(codes)), flush=True)
+    # 实际K线最新日期（以抓到的数据为准，避免探针日期超前导致后续跳过）
+    actual_kline = ""
+    for _c, _bars in klines.items():
+        if _bars:
+            actual_kline = max(actual_kline, _bars[-1]["d"])
+    if not actual_kline:
+        actual_kline = kline_target
+    if actual_kline != kline_target:
+        print("   注意: 实际K线最新日期 %s（探针 %s）" % (actual_kline, kline_target),
+              flush=True)
 
     # 抓取公司基本面（控股股东/分红/财务绩效/高管增减持/简介）
     # 带缓存：仅在文件缺失或超过 company_cache_days 天才重抓，避免每日全量请求。
@@ -515,7 +542,7 @@ def main():
         path = os.path.join(kline_dir, c + ".json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"code": c, "name": name_map.get(c, ""),
-                       "date": trade_date, "updated": now, "bars": bars},
+                       "date": kline_target, "updated": now, "bars": bars},
                       f, ensure_ascii=False)
 
     for it in items:
@@ -562,12 +589,103 @@ def main():
     except Exception as exc:  # noqa: BLE001
         print("   提醒模块异常: %s" % exc, flush=True)
 
+    # 除权除息明细（每周刷新一次，K线图 S 标志用）
+    try:
+        refresh_file = os.path.join(meta_dir, "dividends_refresh.json")
+        need_div = True
+        if os.path.exists(refresh_file):
+            with open(refresh_file, encoding="utf-8") as f:
+                dr = json.load(f)
+            try:
+                last = datetime.date.fromisoformat(dr.get("date", "2000-01-01"))
+                if (datetime.date.today() - last).days < 6:
+                    need_div = False
+            except ValueError:
+                pass
+        if need_div:
+            y0 = datetime.date.today().year - 4
+            div_details = sm.fetch_dividend_details(
+                "%d-01-01" % y0, datetime.date.today().isoformat())
+            div_dir = os.path.join(data_root, "dividends")
+            os.makedirs(div_dir, exist_ok=True)
+            for code, recs in div_details.items():
+                with open(os.path.join(div_dir, code + ".json"), "w",
+                          encoding="utf-8") as f:
+                    json.dump(recs, f, ensure_ascii=False)
+            with open(refresh_file, "w", encoding="utf-8") as f:
+                json.dump({"date": datetime.date.today().isoformat()}, f)
+            print("   除权除息明细已刷新: %d 只股票" % len(div_details), flush=True)
+        else:
+            print("   除权除息明细在刷新周期内，沿用缓存", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("   除权除息明细刷新失败: %s" % exc, flush=True)
+
+    # 高管增持排名（近一年、总列表内、最近的在最前）
+    try:
+        ib_start = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+        ibl = sm.fetch_insider_buys(ib_start)
+        wl = set(codes)
+        by_code = {}
+        for r in ibl:
+            if r.get("code") not in wl or r["code"] in by_code:
+                continue
+            by_code[r["code"]] = r
+        insider_items = [by_code[c] for c in by_code]
+        insider_items.sort(key=lambda x: x.get("date") or "", reverse=True)
+        with open(os.path.join(meta_dir, "insider_buys.json"), "w",
+                  encoding="utf-8") as f:
+            json.dump({"date": trade_date, "updated_at": now,
+                       "items": insider_items}, f, ensure_ascii=False)
+        print("   高管增持股票: %d 只" % len(insider_items), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("   高管增持抓取失败: %s" % exc, flush=True)
+
+    # 基金“当天涨跌幅”轻量刷新（只更新 funds.json 的 nav_date/chg_today）
+    try:
+        funds_path = os.path.join(data_root, "funds.json")
+        if os.path.exists(funds_path):
+            with open(funds_path, encoding="utf-8") as f:
+                fnd = json.load(f)
+            fund_items = fnd.get("items") or []
+            if fund_items:
+                fcodes = [x.get("code") for x in fund_items if x.get("code")]
+                nav_map = {}
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    futs = {ex.submit(sm.fetch_fund_nav, c): c for c in fcodes}
+                    for fut in as_completed(futs):
+                        c = futs[fut]
+                        try:
+                            nav_map[c] = fut.result()
+                        except Exception:  # noqa: BLE001
+                            nav_map[c] = None
+                changed = 0
+                for it in fund_items:
+                    nv = nav_map.get(it.get("code"))
+                    if nv and nv.get("date"):
+                        if it.get("nav_date") != nv["date"] or it.get("chg_today") != nv.get("chg"):
+                            it["nav_date"] = nv["date"]
+                            it["chg_today"] = nv.get("chg")
+                            changed += 1
+                if changed:
+                    fnd["updated_at"] = now
+                    with open(funds_path, "w", encoding="utf-8") as f:
+                        json.dump(fnd, f, ensure_ascii=False)
+                print("   基金当天涨跌幅已刷新: %d/%d 只更新" % (changed, len(fund_items)),
+                      flush=True)
+            else:
+                print("   funds.json 为空，跳过基金涨跌幅刷新", flush=True)
+        else:
+            print("   未找到 funds.json（尚未构建基金页），跳过", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("   基金涨跌幅刷新失败: %s" % exc, flush=True)
+
     with open(os.path.join(meta_dir, "boards.json"), "w",
               encoding="utf-8") as f:
         json.dump({"date": trade_date, "boards": board_rows}, f,
                   ensure_ascii=False)
     with open(latest_file, "w", encoding="utf-8") as f:
         json.dump({"date": trade_date, "updated_at": now,
+                   "kline_date": actual_kline,
                    "roe_date": roe_date, "total": len(items),
                    "snapshot": "snapshot.json"}, f, ensure_ascii=False)
     print("完成: %s · %d 只股票 · 板块 %d 个" % (trade_date, len(items),

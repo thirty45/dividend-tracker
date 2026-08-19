@@ -166,6 +166,11 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .rank-list .rv { font-weight: 600; }
 .rank-list .rank-empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
 
+/* 高管增持排名表（全宽） */
+.insider-rank { margin: 0 0 12px; }
+.insider-rank .rank-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+#insider-table tbody tr { cursor: pointer; }
+
 /* 可点击标签 */
 .tag { cursor: pointer; }
 .tag:hover { background: #d8e2ff; }

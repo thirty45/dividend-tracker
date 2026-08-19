@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.staticfile.org/echarts/5.5.0/echarts.min.js"></script>
   <script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
+  <script src="https://cdn.staticfile.org/pinyin-pro/3.26.0/index.js"></script>
+  <script>window.pinyinPro||document.write('<script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.26.0/dist/index.js"><\/script>');</script>
 </head>
 <body>
   <header>
@@ -27,6 +29,7 @@
   <main>
     <section id="view-list">
       <div id="rankings" class="rankings"></div>
+      <div id="insider-rank" class="insider-rank" hidden></div>
       <div class="table-wrap">
         <table id="stock-table">
           <thead>
@@ -80,6 +83,8 @@
           <thead>
             <tr>
               <th data-k="name">名称(代码)</th>
+              <th data-k="nav_date">净值日期</th>
+              <th data-k="chg_today" class="num">当天涨跌幅%</th>
               <th data-k="type">类型</th>
               <th data-k="index_name">跟踪指数</th>
               <th data-k="pct_1m" class="num">近1月%</th>
@@ -158,6 +163,11 @@
       <div id="d-sub" class="muted"></div>
       <div id="d-cards" class="cards"></div>
       <div class="toolbar chart-bar">
+        <div class="seg" id="k-period">
+          <button data-p="day" class="active">日K</button>
+          <button data-p="week">周K</button>
+          <button data-p="month">月K</button>
+        </div>
         <label><input type="checkbox" id="ck-ma" checked> 均线(MA5/10/20/60)</label>
         <label><input type="checkbox" id="ck-boll"> BOLL(20,2)</label>
         <label><input type="checkbox" id="ck-dmi"> DMI(14)</label>
@@ -271,7 +281,7 @@
       <div id="fd-chart"></div>
     </section>
   </main>
-  <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 15:15 后自动更新</footer>
+  <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 16:30 后自动更新</footer>
   <script src="app.js"></script>
 </body>
 </html>
