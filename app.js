@@ -414,16 +414,34 @@ function renderChart() {
       axisPointer: { type: "cross" },
       formatter: (params) => {
         const arr = Array.isArray(params) ? params : [params];
-        let html = arr.map((p) => `${p.marker}${p.seriesName}：${p.value}`).join("<br>");
-        const idx = arr.length ? arr[0].dataIndex : -1;
+        const first = arr[0];
+        const idx = first ? first.dataIndex : -1;
         const d = idx >= 0 && bars[idx] ? bars[idx].d : "";
+        const lines = [];
         const div = state.divs && state.divs[d];
         if (div) {
-          html = "<b>除权除息 " + d + "</b><br>" + html +
-            "<br><span style='color:#b08500'>分红方案：" +
-            esc(div.profile || "—") + "</span>";
+          lines.push("<b>" + d + " 除权除息</b>");
+          lines.push('<span style="color:#b08500">分红方案：' +
+            esc(div.profile || "—") + "</span>");
+        } else if (d) {
+          lines.push("<b>" + d + "</b>");
         }
-        return html;
+        for (const p of arr) {
+          const nm = p.seriesName;
+          if (nm === "K线" && Array.isArray(p.value)) {
+            lines.push("开盘：" + p.value[0]);
+            lines.push("收盘：" + p.value[1]);
+            lines.push("最低：" + p.value[2]);
+            lines.push("最高：" + p.value[3]);
+          } else if (nm === "成交量") {
+            lines.push(p.marker + nm + "：" +
+              (p.value == null ? "—" : Number(p.value).toLocaleString()));
+          } else if (nm && nm !== "K线") {
+            lines.push(p.marker + nm + "：" +
+              (p.value == null ? "—" : Number(p.value).toFixed(2)));
+          }
+        }
+        return lines.join("<br>");
       },
     },
     axisPointer: { link: [{ xAxisIndex: "all" }] },
