@@ -137,6 +137,9 @@ footer { text-align: center; padding: 18px 10px 30px; }
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   margin: 14px 0 4px;
 }
+.finance-chart-bar[hidden] { display: none; }
+.fin-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fin-head h4 { margin: 0; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .seg button {
   border: none; background: var(--card); color: var(--text);

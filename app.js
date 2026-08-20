@@ -618,12 +618,14 @@ function parkFinChart() {
 }
 
 function renderFinance(fin) {
+  parkFinChart();
   const groups = fin.groups || {};
   const gran = state.finGran;
   const periods = (fin.periods || [])
     .filter((p) => p.type === gran)
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(-10); // 最多展示10年
+    .slice(-10)
+    .reverse(); // 从左到右：新 -> 旧，最多10年
   state.finCols = periods.length + 1;
   const colLabel = (p) => {
     const y = String(p.year || p.date.slice(0, 4));
@@ -660,18 +662,20 @@ function renderFinance(fin) {
   html += "</tbody></table></div>";
   const wrap = $("#ci-finance");
   wrap.innerHTML = html;
-  // 默认滚动到最右：默认看到最近约5年，向左拖动看更早数据
-  const tw = wrap.querySelector(".fin-wrap");
-  if (tw) tw.scrollLeft = tw.scrollWidth;
   wrap.querySelectorAll(".fin-row").forEach((tr) =>
     tr.addEventListener("click", () => selectMetric(tr))
   );
-  const first = wrap.querySelector(".fin-row");
-  if (first) selectMetric(first);
-  else getFinChart().clear();
+  // 指标图默认不展示，点击指标行才展示
+  getFinChart().clear();
+  const cbar = document.querySelector(".finance-chart-bar");
+  if (cbar) cbar.hidden = true;
+  const holder = $("#fin-chart-holder");
+  if (holder) holder.hidden = true;
 }
 
 function selectMetric(tr) {
+  const cbar = document.querySelector(".finance-chart-bar");
+  if (cbar) cbar.hidden = false;
   parkFinChart();
   document.querySelectorAll(".fin-chart-row").forEach((r) => r.remove());
   document.querySelectorAll(".fin-row").forEach((x) => x.classList.remove("active"));
