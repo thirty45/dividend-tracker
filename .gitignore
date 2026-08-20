@@ -10,6 +10,7 @@ _s.html
 .dbg*.py
 # 大文件不提交到仓库（由每日任务现场生成，仅用于网页部署）
 data/kline/
+data/kline_raw/
 data/fund_nav/
 # 本地临时缓存（可转债正股K线等，不入库）
 _wb_cache_kline/

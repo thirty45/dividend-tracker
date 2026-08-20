@@ -255,10 +255,12 @@ def main():
     data_root = os.path.join(BASE, "data")
     meta_dir = os.path.join(data_root, "meta")
     kline_dir = os.path.join(data_root, "kline")
+    raw_dir = os.path.join(data_root, "kline_raw")
     hist_dir = os.path.join(data_root, "history")
     latest_file = os.path.join(meta_dir, "latest.json")
     os.makedirs(meta_dir, exist_ok=True)
     os.makedirs(kline_dir, exist_ok=True)
+    os.makedirs(raw_dir, exist_ok=True)
     os.makedirs(hist_dir, exist_ok=True)
 
     watch = load_watchlist()
@@ -317,43 +319,71 @@ def main():
 
     print("4/5 抓取K线(并发) ...", flush=True)
     klines = {}
+    raw_klines = {}
     todo = []
     for c in codes:
-        p = os.path.join(kline_dir, c + ".json")
-        if not args.force and os.path.exists(p):
+        pa = os.path.join(kline_dir, c + ".json")
+        pr = os.path.join(raw_dir, c + ".json")
+        adj_ok = raw_ok = False
+        if not args.force and os.path.exists(pa):
             try:
-                with open(p, encoding="utf-8") as f:
+                with open(pa, encoding="utf-8") as f:
                     old = json.load(f)
                 if old.get("bars") and old["bars"][-1].get("d", "") >= kline_target:
+                    adj_ok = True
                     klines[c] = old["bars"]
-                    continue
             except Exception:  # noqa: BLE001
                 pass
-        todo.append(c)
-    print("   待抓取K线 %d 只（已最新 %d 只）" % (len(todo), len(codes) - len(todo)),
+        if not args.force and os.path.exists(pr):
+            try:
+                with open(pr, encoding="utf-8") as f:
+                    oldr = json.load(f)
+                if oldr.get("bars") and oldr["bars"][-1].get("d", "") >= kline_target:
+                    raw_ok = True
+                    raw_klines[c] = oldr["bars"]
+            except Exception:  # noqa: BLE001
+                pass
+        if not (adj_ok and raw_ok):
+            todo.append(c)
+    print("   待抓取K线 %d 只（前复权+未复权均最新 %d 只）"
+          % (len(todo), len(codes) - len(todo)),
           flush=True)
     done_count = [0]
+
+    def _fetch_pair(c):
+        name, bars = sm.fetch_kline(c, cfg["kline_start"], "20500101",
+                                    kline_target)
+        rbars = sm.fetch_kline_raw(c, cfg["kline_start"], "20500101",
+                                   kline_target)
+        return c, name, bars, rbars
+
     with ThreadPoolExecutor(max_workers=cfg.get("workers", 6)) as ex:
-        futs = {ex.submit(sm.fetch_kline, c, cfg["kline_start"],
-                          "20500101", kline_target): c
+        futs = {ex.submit(_fetch_pair, c): c
                 for c in todo}
         now_iso = datetime.datetime.now().isoformat(timespec="seconds")
         for fut in as_completed(futs):
-            c = futs[fut]
             try:
-                name, bars = fut.result()
+                c, name, bars, rbars = fut.result()
                 klines[c] = bars
+                raw_klines[c] = rbars
                 if name:
                     name_map[c] = name
             except Exception as exc:  # noqa: BLE001
+                c = futs[fut]
                 print("   K线失败 %s: %s" % (c, exc), flush=True)
                 klines[c] = []
+                raw_klines[c] = []
             # 边抓边写，断点可续
             path = os.path.join(kline_dir, c + ".json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"code": c, "name": name_map.get(c, ""),
                            "date": kline_target, "updated": now_iso,
                            "bars": klines[c]}, f, ensure_ascii=False)
+            pathr = os.path.join(raw_dir, c + ".json")
+            with open(pathr, "w", encoding="utf-8") as f:
+                json.dump({"code": c, "name": name_map.get(c, ""),
+                           "date": kline_target, "updated": now_iso,
+                           "bars": raw_klines[c]}, f, ensure_ascii=False)
             done_count[0] += 1
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
@@ -361,6 +391,9 @@ def main():
     # 实际K线最新日期（以抓到的数据为准，避免探针日期超前导致后续跳过）
     actual_kline = ""
     for _c, _bars in klines.items():
+        if _bars:
+            actual_kline = max(actual_kline, _bars[-1]["d"])
+    for _c, _bars in raw_klines.items():
         if _bars:
             actual_kline = max(actual_kline, _bars[-1]["d"])
     if not actual_kline:
@@ -543,6 +576,12 @@ def main():
         with open(path, "w", encoding="utf-8") as f:
             json.dump({"code": c, "name": name_map.get(c, ""),
                        "date": kline_target, "updated": now, "bars": bars},
+                      f, ensure_ascii=False)
+    for c, rbars in raw_klines.items():
+        pathr = os.path.join(raw_dir, c + ".json")
+        with open(pathr, "w", encoding="utf-8") as f:
+            json.dump({"code": c, "name": name_map.get(c, ""),
+                       "date": kline_target, "updated": now, "bars": rbars},
                       f, ensure_ascii=False)
 
     for it in items:

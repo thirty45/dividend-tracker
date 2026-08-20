@@ -463,6 +463,97 @@ def fetch_kline(code, beg="20200101", end="20500101", min_date=None):
     return "", tbars
 
 
+def _fetch_kline_tencent_raw(code, beg, end):
+    """腾讯不复权日K线（fq 参数留空 -> day 数组，分历史段+最近段两段）。"""
+    if code.startswith(("6", "9", "5")):
+        mkt = "sh"
+    elif code.startswith(("8", "4", "92")):
+        mkt = "bj"
+    else:
+        mkt = "sz"
+    sym = mkt + code
+    bars = []
+    try:
+        j = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,%s,2023-12-31,1000,"
+                    % (sym, _norm_date(beg))},
+            referer="https://gu.qq.com/", timeout=15,
+            retries=2, delay=1.0)
+        rows = ((j.get("data") or {}).get(sym) or {}).get("day") or []
+        for row in rows:
+            if len(row) < 6:
+                continue
+            try:
+                bars.append({
+                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                    "h": float(row[3]), "l": float(row[4]),
+                    "v": float(row[5])})
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        j2 = fetch_json(
+            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+            params={"param": "%s,day,,,700," % sym},
+            referer="https://gu.qq.com/", timeout=15,
+            retries=2, delay=1.0)
+        rows2 = ((j2.get("data") or {}).get(sym) or {}).get("day") or []
+        for row in rows2:
+            if len(row) < 6:
+                continue
+            try:
+                bars.append({
+                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                    "h": float(row[3]), "l": float(row[4]),
+                    "v": float(row[5])})
+            except ValueError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    by_date = {}
+    for b in bars:
+        by_date[b["d"]] = b
+    return [by_date[d] for d in sorted(by_date)]
+
+
+def fetch_kline_raw(code, beg="20200101", end="20500101", min_date=None):
+    """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day。"""
+    if not _em_blocked():
+        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        for market in markets:
+            try:
+                j = fetch_json(KLINE_URL, params={
+                    "secid": "%d.%s" % (market, code),
+                    "fields1": "f1,f2,f3,f4,f5,f6",
+                    "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+                    "klt": "101", "fqt": "0", "beg": beg, "end": end},
+                    referer="https://quote.eastmoney.com/",
+                    retries=3, delay=1.0, timeout=15)
+                klines = (j.get("data") or {}).get("klines") or []
+                if klines:
+                    bars = []
+                    for line in klines:
+                        p = line.split(",")
+                        if len(p) < 7:
+                            continue
+                        bars.append({"d": p[0], "o": float(p[1]),
+                                     "c": float(p[2]), "h": float(p[3]),
+                                     "l": float(p[4]), "v": float(p[5])})
+                    if min_date is None or bars[-1]["d"] >= min_date:
+                        _em_note(True)
+                        return bars
+                    _em_note(False)
+            except Exception:  # noqa: BLE001
+                continue
+    tbars = _fetch_kline_tencent_raw(code, beg, end)
+    if min_date is not None and tbars and tbars[-1]["d"] < min_date:
+        print("   警告: %s 不复权K线最新仅到 %s（期望 %s）"
+              % (code, tbars[-1]["d"], min_date), flush=True)
+    return tbars
+
+
 def _fetch_kline_em(code, beg, end):
     markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
     for market in markets:

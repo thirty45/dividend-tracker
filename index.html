@@ -29,7 +29,25 @@
   <main>
     <section id="view-list">
       <div id="rankings" class="rankings"></div>
-      <div id="insider-rank" class="insider-rank" hidden></div>
+      <div id="insider-rank" class="insider-rank" hidden>
+        <div class="rank-title">近1年高管增持 · 最近在前</div>
+        <div class="table-wrap">
+          <table id="insider-table">
+            <thead>
+              <tr>
+                <th>最近增持日期</th>
+                <th>名称(代码)</th>
+                <th>职务</th>
+                <th class="num">变动股数</th>
+                <th class="num">变动比例%</th>
+                <th>原因</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="insider-info" class="muted"></div>
+      </div>
       <div class="table-wrap">
         <table id="stock-table">
           <thead>
@@ -163,11 +181,16 @@
       <div id="d-sub" class="muted"></div>
       <div id="d-cards" class="cards"></div>
       <div class="toolbar chart-bar">
+        <div class="seg" id="k-fq">
+          <button data-m="raw" class="active">未复权</button>
+          <button data-m="qfq">前复权</button>
+        </div>
         <div class="seg" id="k-period">
           <button data-p="day" class="active">日K</button>
           <button data-p="week">周K</button>
           <button data-p="month">月K</button>
         </div>
+        <span id="k-fq-note" class="muted"></span>
         <label><input type="checkbox" id="ck-ma" checked> 均线(MA5/10/20/60)</label>
         <label><input type="checkbox" id="ck-boll"> BOLL(20,2)</label>
         <label><input type="checkbox" id="ck-dmi"> DMI(14)</label>

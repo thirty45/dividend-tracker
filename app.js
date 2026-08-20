@@ -7,7 +7,8 @@ const state = {
   sort: { k: "dy", asc: false },
   search: "", industry: "",
   chart: null, trendCharts: [], current: null, k: null, h: null,
-  divs: null, kPeriod: "day", pyMap: null,
+  divs: null, kPeriod: "day", kMode: "raw", raw: null, pyMap: null,
+  insiderPage: 1,
   company: null, finChart: null, finGran: "annual", finKey: null,
   currentItem: null, tagFilter: null,
   funds: [], fundSort: { k: "scale_now", asc: false },
@@ -195,33 +196,47 @@ async function openDetail(code) {
   renderCards(it);
   state.trendCharts.forEach((c) => c && c.dispose());
   state.trendCharts = [];
-  const [k, h, dv] = await Promise.all([
+  const [k, h, dv, rw] = await Promise.all([
     fetch("data/kline/" + code + ".json").then((r) => r.json()).catch(() => null),
     fetch("data/history/" + code + ".json").then((r) => r.json()).catch(() => null),
     fetch("data/dividends/" + code + ".json").then((r) => r.json()).catch(() => null),
+    fetch("data/kline_raw/" + code + ".json").then((r) => r.json()).catch(() => null),
   ]);
   state.k = k;
   state.h = h;
+  state.raw = rw;
   state.divs = Array.isArray(dv)
     ? dv.reduce((m, x) => { m[x.ex_date] = x; return m; }, {})
     : null;
-  renderChart();
-  renderTrends(h);
+  // 图表渲染异常不能阻断公司信息加载
+  try { renderChart(); } catch (e) { console.error("renderChart:", e); }
+  try { renderTrends(h); } catch (e) { console.error("renderTrends:", e); }
   loadCompany(code);
 }
 
-async function loadCompany(code) {
-  $("#ci-loading").hidden = false;
-  $("#ci-body").hidden = true;
+async function loadCompany(code, attempt = 0) {
+  const loading = $("#ci-loading");
+  const body = $("#ci-body");
+  if (!loading || !body) return;
+  loading.hidden = false;
+  loading.textContent = "加载公司基本面数据中…";
+  body.hidden = true;
   state.company = null;
   try {
     const d = await fetch("data/company/" + code + ".json").then((r) => r.json());
+    if (!d || typeof d !== "object") throw new Error("空数据");
     state.company = d;
     renderCompany(d);
-    $("#ci-loading").hidden = true;
-    $("#ci-body").hidden = false;
+    loading.hidden = true;
+    body.hidden = false;
   } catch (e) {
-    $("#ci-loading").textContent = "公司基本面数据暂不可用（可能尚未抓取）。";
+    if (attempt === 0) {
+      // 首次失败自动重试一次（应对瞬时加载问题）
+      await new Promise((r) => setTimeout(r, 400));
+      loadCompany(code, 1);
+      return;
+    }
+    loading.textContent = "公司基本面数据暂不可用（" + code + "：" + e.message + "）。";
   }
 }
 
@@ -349,7 +364,17 @@ function renderChart() {
     state.chart = echarts.init(el);
     window.addEventListener("resize", () => state.chart.resize());
   }
+  // 复权模式：默认未复权（raw），缺失时回退前复权
   let bars = state.k.bars;
+  const rawBars = state.raw && state.raw.bars && state.raw.bars.length
+    ? state.raw.bars : null;
+  if (state.kMode === "raw" && rawBars) bars = rawBars;
+  const fqNote = $("#k-fq-note");
+  if (fqNote) {
+    fqNote.textContent = (state.kMode === "raw" && !rawBars)
+      ? "未复权数据未生成，暂显示前复权"
+      : "";
+  }
   if (state.kPeriod !== "day") bars = aggregateBars(bars, state.kPeriod);
   const zoomStart = Math.max(0, 100 - 120 / bars.length * 100); // 默认显示近约半年
   const dates = bars.map((b) => b.d);
@@ -450,7 +475,14 @@ function renderChart() {
       { left: 10, right: 14, top: "74%", height: "14%", containLabel: true },
     ],
     xAxis: [
-      { type: "category", data: dates, gridIndex: 0, boundaryGap: true, axisLine: { onZero: false }, axisLabel: { show: false } },
+      {
+        type: "category", data: dates, gridIndex: 0, boundaryGap: true,
+        axisLine: { onZero: false },
+        axisLabel: {
+          show: true, fontSize: 10, hideOverlap: true,
+          formatter: (v) => (v && v.length > 7 ? v.slice(5) : v),
+        },
+      },
       { type: "category", data: dates, gridIndex: 1, axisLabel: { show: false }, axisTick: { show: false } },
     ],
     yAxis: [
@@ -725,8 +757,8 @@ function route() {
     return;
   }
   renderList();
-  renderRankings();
-  renderInsiderRank();
+  try { renderRankings(); } catch (e) { /* 单个榜单异常不影响页面 */ }
+  try { renderInsiderRank(); } catch (e) { /* 单个榜单异常不影响页面 */ }
   showView("list");
 }
 
@@ -792,22 +824,39 @@ function renderRankings() {
 function renderInsiderRank() {
   const box = $("#insider-rank");
   if (!box) return;
+  const tbody = box.querySelector("tbody");
+  if (!tbody) { box.hidden = true; return; }
   const list = state.insiders || [];
   if (!list.length) { box.hidden = true; return; }
   box.hidden = false;
-  const tbody = box.querySelector("tbody");
-  tbody.innerHTML = list.map((x) => {
+  const per = 15;
+  const pages = Math.max(1, Math.ceil(list.length / per));
+  if (state.insiderPage > pages) state.insiderPage = pages;
+  if (state.insiderPage < 1) state.insiderPage = 1;
+  const page = state.insiderPage;
+  const shown = list.slice((page - 1) * per, page * per);
+  tbody.innerHTML = shown.map((x) => {
     const sh = x.shares == null ? "—" : Math.round(x.shares).toLocaleString();
     const rt = x.ratio == null ? "—" : fmt(x.ratio, 2);
     return `<tr data-code="${x.code}">
       <td>${x.date || "—"}</td>
       <td>${esc(x.name || "—")}(${x.code})</td>
-      <td>${esc(x.holder || "—")}</td>
       <td>${esc(x.position || "—")}</td>
       <td class="num">${sh}</td>
       <td class="num">${rt}</td>
       <td>${esc(x.reason || "—")}</td></tr>`;
   }).join("");
+  const info = $("#insider-info");
+  if (info) {
+    info.innerHTML =
+      '<span>共 ' + list.length + " 只 · 第 " + page + " / " + pages + " 页</span>" +
+      '<button class="mini-btn" id="insider-prev"' + (page <= 1 ? " disabled" : "") + ">上一页</button>" +
+      '<button class="mini-btn" id="insider-next"' + (page >= pages ? " disabled" : "") + ">下一页</button>";
+    const prevBtn = document.getElementById("insider-prev");
+    const nextBtn = document.getElementById("insider-next");
+    if (prevBtn) prevBtn.addEventListener("click", () => { state.insiderPage -= 1; renderInsiderRank(); });
+    if (nextBtn) nextBtn.addEventListener("click", () => { state.insiderPage += 1; renderInsiderRank(); });
+  }
   tbody.querySelectorAll("tr").forEach((tr) =>
     tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
   );
@@ -1078,6 +1127,14 @@ function setupEvents() {
       document.querySelectorAll("#k-period button").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       state.kPeriod = b.dataset.p;
+      renderChart();
+    })
+  );
+  document.querySelectorAll("#k-fq button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#k-fq button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.kMode = b.dataset.m;
       renderChart();
     })
   );

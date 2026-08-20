@@ -170,6 +170,14 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .insider-rank { margin: 0 0 12px; }
 .insider-rank .rank-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
 #insider-table tbody tr { cursor: pointer; }
+#insider-table th, #insider-table td { padding: 4px 7px; font-size: 12px; }
+#insider-info { margin-top: 4px; }
+#insider-info { display: flex; align-items: center; gap: 8px; }
+.mini-btn {
+  border: 1px solid var(--line); background: var(--card); color: var(--text);
+  padding: 2px 10px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.mini-btn:disabled { opacity: .45; cursor: default; }
 
 /* 可点击标签 */
 .tag { cursor: pointer; }
