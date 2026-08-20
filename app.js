@@ -609,7 +609,7 @@ function getFinChart() {
 }
 
 function granLabel(g) {
-  return { annual: "年报", half: "中报", q1: "一季报", q3: "三季报" }[g] || g;
+  return { annual: "年报", half: "二季度", q1: "一季度", q3: "三季度" }[g] || g;
 }
 
 function parkFinChart() {
@@ -620,28 +620,49 @@ function parkFinChart() {
 function renderFinance(fin) {
   const groups = fin.groups || {};
   const gran = state.finGran;
-  let html = '<table class="fin-table"><tbody>';
+  const periods = (fin.periods || [])
+    .filter((p) => p.type === gran)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-10); // 最多展示10年
+  state.finCols = periods.length + 1;
+  const colLabel = (p) => {
+    const y = String(p.year || p.date.slice(0, 4));
+    return { q1: y + "Q1", half: y + "H1", q3: y + "Q3", annual: y }[gran] || y;
+  };
+  let html = '<div class="table-wrap fin-wrap"><table class="fin-table">';
+  html += "<thead><tr><th>指标</th>" +
+    periods.map((p) => `<th class="num">${colLabel(p)}</th>`).join("") +
+    "</tr></thead><tbody>";
   for (const gkey of ["key", "profit", "risk"]) {
     const items = groups[gkey] || [];
     if (!items.length) continue;
-    html += `<tr class="fin-group-row"><td colspan="2">${FIN_GROUP_TITLES[gkey]}</td></tr>`;
+    html += `<tr class="fin-group-row"><td colspan="${state.finCols}">${FIN_GROUP_TITLES[gkey]}</td></tr>`;
     for (const it of items) {
-      const o = it[gran] || {};
-      const v = o.v == null ? "—" : fmt(o.v, 2);
-      let y = "", ycls = "";
-      if (o.yoy != null) {
-        y = " (" + (o.yoy > 0 ? "+" : "") + fmt(o.yoy, 1) + "%)";
-        ycls = o.yoy > 0 ? " red" : " green";
-      }
       const unit = it.unit ? ` <span class="fin-unit">${esc(it.unit)}</span>` : "";
+      let cells = "";
+      for (const p of periods) {
+        const v = (p.vals || {})[it.key];
+        const yoy = (p.yoy || {})[it.key];
+        let cell = "—";
+        if (v != null) {
+          cell = fmt(v, 2);
+          if (yoy != null) {
+            const cls = yoy > 0 ? "red" : yoy < 0 ? "green" : "";
+            cell += `<span class="${cls} fin-yoy">(${(yoy > 0 ? "+" : "") + fmt(yoy, 1)}%)</span>`;
+          }
+        }
+        cells += `<td class="num">${cell}</td>`;
+      }
       html += `<tr class="fin-row" data-key="${it.key}" data-name="${esc(it.name)}" data-unit="${esc(it.unit || "")}">` +
-        `<td>${it.name}${unit}</td>` +
-        `<td class="num">${v}<span class="${ycls} fin-yoy">${y}</span></td></tr>`;
+        `<td>${it.name}${unit}</td>${cells}</tr>`;
     }
   }
-  html += "</tbody></table>";
+  html += "</tbody></table></div>";
   const wrap = $("#ci-finance");
   wrap.innerHTML = html;
+  // 默认滚动到最右：默认看到最近约5年，向左拖动看更早数据
+  const tw = wrap.querySelector(".fin-wrap");
+  if (tw) tw.scrollLeft = tw.scrollWidth;
   wrap.querySelectorAll(".fin-row").forEach((tr) =>
     tr.addEventListener("click", () => selectMetric(tr))
   );
@@ -659,7 +680,7 @@ function selectMetric(tr) {
   state.finName = tr.dataset.name;
   state.finUnit = tr.dataset.unit;
   const td = document.createElement("td");
-  td.colSpan = 2;
+  td.colSpan = state.finCols || 2;
   const slot = document.createElement("tr");
   slot.className = "fin-chart-row";
   slot.appendChild(td);
@@ -680,7 +701,7 @@ function renderFinanceChart() {
     getFinChart().clear();
     return;
   }
-  const labels = series.map((p) => p.date);
+  const labels = series.map((p) => String(p.year || p.date.slice(0, 4)));
   const vals = series.map((p) => (p.vals[state.finKey] == null ? null : +p.vals[state.finKey].toFixed(2)));
   const yoys = series.map((p) => (p.yoy[state.finKey] == null ? null : +p.yoy[state.finKey].toFixed(1)));
   $("#fin-title").textContent = `${state.finName}（${granLabel(gran)}）单位：${state.finUnit || ""}`;

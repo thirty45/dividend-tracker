@@ -122,6 +122,13 @@ footer { text-align: center; padding: 18px 10px 30px; }
   border-left: 3px solid var(--blue); padding-left: 8px; margin-bottom: 6px;
 }
 .fin-table { white-space: nowrap; }
+.fin-wrap { overflow-x: auto; max-width: 100%; }
+.fin-table { min-width: 980px; }
+.fin-table th:first-child, .fin-table td:first-child {
+  position: sticky; left: 0; z-index: 3; background: var(--card);
+  box-shadow: 1px 0 0 var(--line);
+}
+.fin-table th:first-child { background: #fafbfc; }
 .fin-row { cursor: pointer; }
 .fin-row:hover { background: #f0f4ff; }
 .fin-row.active { background: #e7eeff; }
