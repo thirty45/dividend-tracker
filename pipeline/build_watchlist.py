@@ -9,6 +9,7 @@ import datetime
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
@@ -143,7 +144,8 @@ def main():
     n_dy = cfg.get("dividend_years", 3)
     today = datetime.date.today()
     need_years = set(range(today.year - n_dy + 1, today.year + 1))
-    start3 = "%d-01-01" % (today.year - n_dy + 1)
+    # 分红窗口再往前扩一年，覆盖连续3个完整年度（供“连续3年股息率<1%”判断）
+    start3 = "%d-01-01" % (today.year - 3)
     div_map = sm.fetch_dividends_by_year(start3, today.isoformat())
     print("   近%d年有分红记录的股票: %d 只" % (n_dy, len(div_map)))
     removed_no_div, removed_delisted, keep = [], [], {}
@@ -162,6 +164,88 @@ def main():
                 for c in (removed_no_div + removed_delisted)[:15]]
     print("   剔除示例: " + ", ".join(examples))
     stocks = keep
+
+    print("6/6 低股息/亏损质量过滤 ...")
+    n_yield = cfg.get("min_yield_years", 3)
+    min_pct = cfg.get("min_yield_pct", 1.0)
+    yset = [today.year - n_yield + i for i in range(n_yield)]  # 连续N个完整年度
+
+    # 年度每股分红(除权日归属年) 已由 div_map 覆盖；缺年度末收盘价需抓未复权K线
+    need_close = [c for c in stocks
+                  if any((div_map.get(c) or {}).get(y) for y in yset)]
+    print("   为 %d 只股票抓未复权K线（取年度末收盘价算年度股息率）..."
+          % len(need_close), flush=True)
+    raw_dir = os.path.join(BASE, "data", "kline_raw")
+    os.makedirs(raw_dir, exist_ok=True)
+    raw_klines = {}
+
+    def _raw_one(c):
+        try:
+            bars = sm.fetch_kline_raw(c, "20200101", "20500101")
+        except Exception:  # noqa: BLE001
+            bars = []
+        if bars:
+            with open(os.path.join(raw_dir, c + ".json"), "w",
+                      encoding="utf-8") as f:
+                json.dump({"code": c, "name": "",
+                           "date": bars[-1]["d"],
+                           "updated": datetime.datetime.now().isoformat(
+                               timespec="seconds"),
+                           "bars": bars}, f, ensure_ascii=False)
+        return c, bars
+
+    done_r = [0]
+    with ThreadPoolExecutor(max_workers=cfg.get("fund_workers", 6)) as ex:
+        futs = {ex.submit(_raw_one, c): c for c in need_close}
+        for fut in as_completed(futs):
+            c, bars = fut.result()
+            raw_klines[c] = bars
+            done_r[0] += 1
+            if done_r[0] % 200 == 0:
+                print("   K线进度 %d/%d" % (done_r[0], len(need_close)),
+                      flush=True)
+
+    removed_low = []
+    for code in list(stocks):
+        per_year = div_map.get(code) or {}
+        bars = raw_klines.get(code) or []
+        yc = {}
+        for b in bars:
+            y = b["d"][:4]
+            if y in (str(v) for v in yset):
+                yc[y] = b["c"]  # 同年度最后出现=年末收盘（bars升序）
+        yields = []
+        for y in yset:
+            d = per_year.get(y)
+            c = yc.get(str(y))
+            if d is None or not c:
+                yields = None
+                break
+            yields.append(d / c * 100.0)
+        if yields is None:
+            continue  # 数据不足不误删
+        if all(v < min_pct for v in yields):
+            removed_low.append((code, stocks[code].get("name") or code))
+            del stocks[code]
+
+    # 上一年度亏损（最近一个完整年度归母净利润 < 0）
+    loss_year = today.year - 1 if today.month >= 5 else today.year - 2
+    try:
+        profit_map = sm.fetch_annual_profit(loss_year)
+    except Exception as exc:  # noqa: BLE001
+        profit_map = {}
+        print("   上年度净利润抓取失败: %s" % exc)
+    removed_loss = []
+    for code in list(stocks):
+        p = profit_map.get(code)
+        if p is not None and p < 0:
+            removed_loss.append((code, stocks[code].get("name") or code))
+            del stocks[code]
+
+    print("   剔除: 连续%d年股息率<%.1f%% %d 只, %d年度亏损 %d 只"
+          % (n_yield, min_pct, len(removed_low), loss_year, len(removed_loss)))
+    examples2 = ["%s(%s)" % (c, n) for c, n in (removed_low + removed_loss)[:15]]
+    print("   剔除示例: " + ", ".join(examples2))
 
     out = []
     for code, st in sorted(stocks.items()):

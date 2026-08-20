@@ -27,6 +27,8 @@
   "high_yield_min_pct": 3.0,
   "high_yield_min_mv": 10000000000,
   "dividend_years": 3,
+  "min_yield_years": 3,
+  "min_yield_pct": 1.0,
   "kline_start": "20200101",
   "history_keep": 1400,
   "workers": 8,

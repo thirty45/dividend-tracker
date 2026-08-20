@@ -98,6 +98,36 @@ def fetch_roe():
     return used_date, merged
 
 
+def fetch_annual_profit(year, page_size=500):
+    """某完整年度归母净利润 -> {code: PARENT_NETPROFIT}（亏损为负数）。
+
+    数据源：东方财富业绩报表 RPT_LICO_FN_CPD，REPORTDATE 取当年 12-31。
+    """
+    out = {}
+    page = 1
+    while True:
+        j = fetch_json(DC_WEB_URL, params={
+            "reportName": "RPT_LICO_FN_CPD",
+            "columns": "SECURITY_CODE,PARENT_NETPROFIT",
+            "filter": "(REPORTDATE='%d-12-31')" % year,
+            "pageSize": str(page_size), "pageNumber": str(page),
+            "sortColumns": "SECURITY_CODE", "sortTypes": "1",
+            "source": "WEB", "client": "WEB"},
+            referer="https://data.eastmoney.com/", retries=4, delay=1.0)
+        res = j.get("result") or {}
+        data = res.get("data") or []
+        for r in data:
+            code = r.get("SECURITY_CODE")
+            v = r.get("PARENT_NETPROFIT")
+            if code and v is not None:
+                out[code] = v
+        pages = res.get("pages") or 0
+        if page >= pages or not data:
+            break
+        page += 1
+    return out
+
+
 def fetch_sharebonus(start_date, end_date, page_size=500):
     """近一年已实施分红 -> {code: 每股税前现金分红}。"""
     per_share = {}
