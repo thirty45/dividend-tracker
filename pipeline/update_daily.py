@@ -488,6 +488,20 @@ def main():
         print("   成功 %d/%d" % (got, len(need)), flush=True)
 
     # 组装快照
+    # 近1年高管增持/减持（角标用；buy 记录也用于首页“高管增持”排名表）
+    try:
+        ib_start = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
+        insider_buys = sm.fetch_insider_changes(ib_start, 1)
+        insider_sells = sm.fetch_insider_changes(ib_start, -1)
+        buy_codes = {r.get("code") for r in insider_buys if r.get("code")}
+        sell_codes = {r.get("code") for r in insider_sells if r.get("code")}
+        print("   高管增持 %d 条 / 减持 %d 条" %
+              (len(insider_buys), len(insider_sells)), flush=True)
+    except Exception as exc:  # noqa: BLE001
+        insider_buys, insider_sells = [], []
+        buy_codes, sell_codes = set(), set()
+        print("   高管增减持抓取失败: %s" % exc, flush=True)
+
     items = []
     for s in stocks:
         code = s["code"]
@@ -508,6 +522,8 @@ def main():
             "roe_date": roe_date,
             "industry": v.get("BOARD_NAME"),
             "tags": s.get("tags", []),
+            "ins_up": code in buy_codes,
+            "ins_down": code in sell_codes,
         })
     # 派生字段：涨跌幅/国企/股息率均值/预期收益率/标签重写
     enrich_items(items, klines, company_dir, cfg, raw_opens)
@@ -661,11 +677,9 @@ def main():
 
     # 高管增持排名（近一年、总列表内、最近的在最前）
     try:
-        ib_start = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
-        ibl = sm.fetch_insider_buys(ib_start)
         wl = set(codes)
         by_code = {}
-        for r in ibl:
+        for r in insider_buys:
             if r.get("code") not in wl or r["code"] in by_code:
                 continue
             by_code[r["code"]] = r

@@ -60,6 +60,15 @@ tbody tr:last-child td { border-bottom: none; }
 .green { color: var(--green); }
 .tag { display: inline-block; margin: 1px 2px; padding: 1px 6px; border-radius: 10px;
   font-size: 11px; background: #eef3ff; color: #3557c4; }
+/* 首页股票名角标：超=股息率≥5% 高=≥3% 增=近1年高管增持 减=近1年高管减持 */
+.bdg {
+  display: inline-block; margin-left: 3px; padding: 0 4px; border-radius: 4px;
+  font-size: 10px; line-height: 14px; color: #fff; vertical-align: 1px;
+}
+.bdg-super { background: #c62828; }
+.bdg-high { background: #ef6c00; }
+.bdg-up { background: #d32f2f; }
+.bdg-down { background: #2e7d32; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; margin: 10px 0; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
 .card .k { color: var(--muted); font-size: 11px; }

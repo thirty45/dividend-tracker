@@ -106,6 +106,14 @@ function filtered() {
 }
 
 function stockRowHTML(s) {
+  const badges = [];
+  if (s.dy != null && s.dy >= 5) {
+    badges.push('<span class="bdg bdg-super" title="股息率≥5%（超高股息）">超</span>');
+  } else if (s.dy != null && s.dy >= 3) {
+    badges.push('<span class="bdg bdg-high" title="股息率≥3%（高股息）">高</span>');
+  }
+  if (s.ins_up) badges.push('<span class="bdg bdg-up" title="近1年高管增持">增</span>');
+  if (s.ins_down) badges.push('<span class="bdg bdg-down" title="近1年高管减持">减</span>');
   const pct = s.pct == null ? null : Number(s.pct);
   const pctCls = pct > 0 ? "red" : pct < 0 ? "green" : "";
   const pctTxt = pct == null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
@@ -114,7 +122,7 @@ function stockRowHTML(s) {
   const tags = (s.tags || []).filter((t) => t !== "基金持仓")
     .map((t) => `<span class="tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("");
   return `<tr data-code="${s.code}">
-    <td class="stock-id">${esc(s.name || "—")}(${s.code})</td>
+    <td class="stock-id">${esc(s.name || "—")}(${s.code})${badges.join("")}</td>
     <td class="num">${fmt(s.close)}</td>
     <td class="num ${pctCls}">${pctTxt}</td>
     <td class="num ${mc(s.pct_1m)}">${m(s.pct_1m)}</td>

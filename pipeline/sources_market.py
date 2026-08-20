@@ -254,24 +254,25 @@ def fetch_dividend_details(start_date, end_date, page_size=500):
     return out
 
 
-def fetch_insider_buys(start_date, page_size=500):
-    """近一年高管增持（二级市场买入类）-> [{code,name,date,holder,position,
+def fetch_insider_changes(start_date, direction=1, page_size=500):
+    """近一年高管增减持（二级市场买卖类）-> [{code,name,date,holder,position,
     shares,ratio,reason}]，按日期降序。
 
     数据源：东财数据中心「高管持股变动」RPT_EXECUTIVE_HOLD_CHANGE。
-    仅保留 CHANGE_NUM>0（增持）且原因属于二级市场买入（排除首发上市/股权
-    激励/分红送转等非主动买入）。
+    direction=1 增持（CHANGE_NUM>0），direction=-1 减持（CHANGE_NUM<0）；
+    原因仅保留二级市场买卖（排除首发上市/股权激励/分红送转等非主动交易）。
     """
     reasons = ("竞价交易", "二级市场买卖", "集中竞价交易", "大宗交易", "集中交易")
     out = []
     page = 1
     while True:
+        sign = ">0" if direction >= 0 else "<0"
         j = fetch_json(DC_WEB_URL, params={
             "reportName": "RPT_EXECUTIVE_HOLD_CHANGE",
             "columns": ("SECURITY_CODE,SECURITY_NAME_ABBR,CHANGE_DATE,"
                         "HOLDER_NAME,EXECUTIVE_NAME,POSITION,CHANGE_NUM,"
                         "CHANGE_RATIO,CHANGE_REASON"),
-            "filter": "(CHANGE_DATE>='%s')(CHANGE_NUM>0)" % start_date,
+            "filter": "(CHANGE_DATE>='%s')(CHANGE_NUM%s)" % (start_date, sign),
             "pageSize": str(page_size), "pageNumber": str(page),
             "sortColumns": "CHANGE_DATE", "sortTypes": "-1",
             "source": "WEB", "client": "WEB"},
