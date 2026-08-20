@@ -102,7 +102,7 @@ def _streak_below_boll(bars, n=5, period=20, k=2.0):
                for i in range(len(bars) - n, len(bars)))
 
 
-def enrich_items(items, klines, company_dir, cfg, raw_opens=None):
+def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=None):
     """为每只股票计算派生字段并写回 item（就地修改）。
 
     派生：近1月/近3月涨跌幅、每股收益、每股分红、连续分红年数、是否国有、
@@ -112,6 +112,7 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None):
     """
     today = datetime.date.today()
     raw_opens = raw_opens or {}
+    raw_klines = raw_klines or {}
     # 近5年窗口：从「今往前5个自然年」的1月起（如 2026 年取 2021-01 起，约68个月）。
     five_start = "%d-01" % max(cfg.get("finance_start_year", 2016),
                                today.year - 5)
@@ -156,21 +157,28 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None):
 
         div = (comp or {}).get("dividend", {}) or {}
         years = div.get("years", []) or []
-        # 配送股现金等价 = 除权后开盘价 × 每股配送股数（送股+转增）。
-        # 开盘价必须用「不复权」数据（raw_opens）：前复权K线会把除权日价格
-        # 按后续分红调整（如派能科技 2024-06-21 真实 40.80 vs 前复权 40.24）。
+        # 除权日开盘价（未复权）：
+        #   1) 优先从未复权K线(数据/raw klines)里取当天的开盘价；
+        #   2) 缺失时回退到单独抓取的 raw_opens（送转折算用）。
+        # 配送股现金等价 = 除权日开盘价 × 每股配送股数（送股+转增）。
         div_changed = False
         raw = raw_opens.get(code) or {}
+        rk_map = {b["d"]: b for b in (raw_klines.get(code) or [])}
         for y in years:
-            if (y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0):
-                ex_open = raw.get(y.get("ex_date")) if y.get("ex_date") else None
-                y["ex_open"] = ex_open
-                if ex_open:
-                    extra = ex_open * ((y.get("send_ratio") or 0) + (y.get("trans_ratio") or 0))
-                    y["per_share_real"] = round((y.get("per_share") or 0) + extra, 4)
-                else:
-                    y["per_share_real"] = y.get("per_share")
-                div_changed = True
+            exd = y.get("ex_date")
+            if not exd:
+                continue
+            b = rk_map.get(exd)
+            ex_open = b.get("o") if b else None
+            if ex_open is None:
+                ex_open = raw.get(exd)
+            y["ex_open"] = ex_open
+            ps = y.get("per_share")
+            extra = 0.0
+            if ex_open:
+                extra = ex_open * ((y.get("send_ratio") or 0) + (y.get("trans_ratio") or 0))
+            y["per_share_real"] = round((ps or 0) + extra, 4) if ps is not None else None
+            div_changed = True
         if div_changed and comp:
             try:
                 with open(cp, "w", encoding="utf-8") as f:
@@ -534,7 +542,7 @@ def main():
             "ins_down": code in sell_codes,
         })
     # 派生字段：涨跌幅/国企/股息率均值/预期收益率/标签重写
-    enrich_items(items, klines, company_dir, cfg, raw_opens)
+    enrich_items(items, klines, company_dir, cfg, raw_opens, raw_klines)
 
     items.sort(key=lambda x: -(x["dy"] if x["dy"] is not None else -1))
 

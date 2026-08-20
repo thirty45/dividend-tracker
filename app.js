@@ -592,9 +592,13 @@ function renderDividend(dd, it) {
     const st = (y.send_ratio || 0) + (y.trans_ratio || 0);
     const extra = (y.ex_open && st) ? fmt(y.ex_open * st, 3) : "—";
     const real = y.per_share_real != null ? fmt(y.per_share_real, 3) : "—";
+    const exOpen = y.ex_open == null ? "—" : fmt(y.ex_open, 2);
+    const rate = (y.ex_open && y.per_share_real != null)
+      ? fmt((y.per_share_real / y.ex_open) * 100, 2) : "—";
     return `<tr><td>${y.year}</td><td class="plan-cell">${y.plan ? esc(y.plan) : "—"}</td>` +
       `<td class="num">${ps}</td><td class="num">${extra}</td>` +
-      `<td class="num"><b>${real}</b></td><td class="num">${tot}</td>` +
+      `<td class="num"><b>${real}</b></td><td class="num">${exOpen}</td>` +
+      `<td class="num">${rate}</td><td class="num">${tot}</td>` +
       `<td class="num">${ratio}</td></tr>`;
   }).join("");
 }
