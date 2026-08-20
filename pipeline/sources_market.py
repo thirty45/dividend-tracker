@@ -259,10 +259,11 @@ def fetch_insider_changes(start_date, direction=1, page_size=500):
     shares,ratio,reason}]，按日期降序。
 
     数据源：东财数据中心「高管持股变动」RPT_EXECUTIVE_HOLD_CHANGE。
-    direction=1 增持（CHANGE_NUM>0），direction=-1 减持（CHANGE_NUM<0）；
-    原因仅保留二级市场买卖（排除首发上市/股权激励/分红送转等非主动交易）。
+    direction=1 增持（CHANGE_NUM>0），direction=-1 减持（CHANGE_NUM<0）。
+    采用“黑名单”排除非市场交易（回购注销/首发上市/股权激励/分红送转/增发上市），
+    其余如 竞价交易/集中竞价/二级市场买卖/个人原因减持/大宗交易 等均计入。
     """
-    reasons = ("竞价交易", "二级市场买卖", "集中竞价交易", "大宗交易", "集中交易")
+    exclude_reasons = ("回购注销", "首发上市", "股权激励实施", "分红送转", "增发上市")
     out = []
     page = 1
     while True:
@@ -281,7 +282,7 @@ def fetch_insider_changes(start_date, direction=1, page_size=500):
         data = res.get("data") or []
         for r in data:
             reason = r.get("CHANGE_REASON") or ""
-            if reason not in reasons:
+            if reason in exclude_reasons:
                 continue
             out.append({
                 "code": r.get("SECURITY_CODE"),
