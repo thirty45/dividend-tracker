@@ -470,9 +470,14 @@ def main():
     else:
         print("   公司基本面均最新，跳过", flush=True)
 
-    # 收集送转分红记录，抓「不复权」除权日开盘价（配送股折算现金分红用）
+    # 收集需补「不复权」除权日开盘价的分红记录：
+    #   1) 送转年度（配送股折算现金分红用）；
+    #   2) 除权日在未复权K线覆盖范围之外（2020年前）且 ex_open 缺失的年度。
     raw_opens = {}
     need = []
+    rk_dates = {}
+    for code in codes:
+        rk_dates[code] = {b["d"] for b in (raw_klines.get(code) or [])}
     for code in codes:
         p = os.path.join(company_dir, code + ".json")
         if not os.path.exists(p):
@@ -483,8 +488,13 @@ def main():
         except Exception:  # noqa: BLE001
             continue
         for y in ((compd.get("dividend", {}) or {}).get("years", []) or []):
-            if ((y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0)) and y.get("ex_date"):
-                need.append((code, y["ex_date"]))
+            exd = y.get("ex_date")
+            if not exd:
+                continue
+            if ((y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0)) or (
+                y.get("ex_open") is None and exd not in rk_dates.get(code, set())
+            ):
+                need.append((code, exd))
     need = sorted(set(need))
     if need:
         print("抓不复权除权日开盘价 %d 条（送转分红折算）..." % len(need), flush=True)
