@@ -69,6 +69,13 @@ def _streak_yin(bars, n=7):
     return all(b["c"] < b["o"] for b in bars[-n:])
 
 
+def _streak_yang(bars, n=7):
+    """连续 n 个交易日收阳线（收盘价 > 开盘价，含当前日）。数据不足返回 False。"""
+    if not bars or len(bars) < n:
+        return False
+    return all(b["c"] > b["o"] for b in bars[-n:])
+
+
 def _boll_lower(bars, n=20, k=2.0):
     """布林带下轨序列（与 bars 等长）：n 日均线 - k×标准差（总体标准差）。
     数据不足 n 根的位置返回 None。"""
@@ -118,6 +125,7 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None):
         it["pct_7d"] = _pct_from_bars(bars, 7)
         it["down7"] = _streak_down(bars, 7)
         it["yin7"] = _streak_yin(bars, 7)
+        it["yang7"] = _streak_yang(bars, 7)
         # 连续5天跌破布林带下轨（20日 ± 2σ）
         it["boll5"] = _streak_below_boll(bars, 5)
 

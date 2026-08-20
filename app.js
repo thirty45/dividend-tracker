@@ -825,6 +825,8 @@ function renderRankings() {
     .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
   const yin7 = all.filter((s) => s.yin7 && s.pct_7d != null)
     .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const yang7 = all.filter((s) => s.yang7 && s.pct_7d != null)
+    .sort((a, b) => b.pct_7d - a.pct_7d).slice(0, 10);
   const boll5 = all.filter((s) => s.boll5 && s.pct_7d != null)
     .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
   const block = (title, rows, key, emptyText) => {
@@ -848,6 +850,7 @@ function renderRankings() {
     block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m") +
     block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +
     block("连续7天阴线", yin7, "pct_7d", "今日暂无满足条件的股票") +
+    block("连续7天阳线", yang7, "pct_7d", "今日暂无满足条件的股票") +
     block("连续5天跌破布林下轨", boll5, "pct_7d", "今日暂无满足条件的股票");
   box.querySelectorAll(".rc").forEach((el) =>
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
