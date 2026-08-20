@@ -157,6 +157,13 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
 
         div = (comp or {}).get("dividend", {}) or {}
         years = div.get("years", []) or []
+        # 年度股息率（与“近5年平均股息率”同一口径）：每股现金分红 ÷ 该年度年末前复权收盘价。
+        # per_share 来自东财分红送配报表，价格来自东财前复权K线，均为网络原始数据。
+        year_close_qfq = {}
+        for b in bars:
+            d = b.get("d") or b.get("date") or ""
+            if len(d) >= 4:
+                year_close_qfq[d[:4]] = b.get("c")  # 同年度保留最后（年末收盘）
         # 除权日开盘价（未复权）：
         #   1) 优先从未复权K线(数据/raw klines)里取当天的开盘价；
         #   2) 缺失时回退到单独抓取的 raw_opens（送转折算用）。
@@ -167,6 +174,10 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         for y in years:
             exd = y.get("ex_date")
             if not exd:
+                # 尚未除权实施（如当年新预案）：年度股息率口径无意义，置空
+                if y.get("yield_annual") is not None:
+                    y["yield_annual"] = None
+                    div_changed = True
                 continue
             b = rk_map.get(exd)
             ex_open = b.get("o") if b else None
@@ -174,6 +185,12 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
                 ex_open = raw.get(exd)
             y["ex_open"] = ex_open
             ps = y.get("per_share")
+            c_end = year_close_qfq.get(str(y.get("year")))
+            yn = (round(ps / c_end * 100.0, 2)
+                  if ps is not None and c_end else None)
+            if y.get("yield_annual") != yn:
+                y["yield_annual"] = yn
+                div_changed = True
             extra = 0.0
             if ex_open:
                 extra = ex_open * ((y.get("send_ratio") or 0) + (y.get("trans_ratio") or 0))
@@ -228,14 +245,9 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         it["div_yield_5y"] = round(sum(dy_list) / len(dy_list), 2) if dy_list else None
 
         # 连续2年股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；年度股息率=每股分红/年末收盘价）
-        year_close = {}
-        for b in bars:
-            d = b.get("d") or b.get("date") or ""
-            if len(d) >= 4:
-                year_close[d[:4]] = b.get("c")  # 同年度保留最后（年末收盘）
         dy_vals = []
         for yr in (today.year - 1, today.year - 2):
-            c = year_close.get(str(yr))
+            c = year_close_qfq.get(str(yr))
             if not c:
                 break
             d = dps_by_year.get(yr)

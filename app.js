@@ -593,8 +593,8 @@ function renderDividend(dd, it) {
     const extra = (y.ex_open && st) ? fmt(y.ex_open * st, 3) : "—";
     const real = y.per_share_real != null ? fmt(y.per_share_real, 3) : "—";
     const exOpen = y.ex_open == null ? "—" : fmt(y.ex_open, 2);
-    const rate = (y.ex_open && y.per_share != null)
-      ? fmt((y.per_share / y.ex_open) * 100, 2) : "—";
+    // 股息率口径：每股现金分红 ÷ 该年度年末前复权收盘价（网络原始数据，本地计算）
+    const rate = y.yield_annual != null ? fmt(y.yield_annual, 2) : "—";
     return `<tr><td>${y.year}</td><td class="plan-cell">${y.plan ? esc(y.plan) : "—"}</td>` +
       `<td class="num">${ps}</td><td class="num">${extra}</td>` +
       `<td class="num"><b>${real}</b></td><td class="num">${exOpen}</td>` +
