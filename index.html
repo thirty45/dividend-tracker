@@ -23,6 +23,7 @@
         <button id="tab-boards">板块市值排名</button>
         <button id="tab-funds">红利/宽基基金</button>
         <button id="tab-cbonds">可转债</button>
+        <button id="tab-hk">港股通</button>
       </nav>
     </div>
   </header>
@@ -175,6 +176,83 @@
       </div>
     </section>
 
+    <section id="view-hk" hidden>
+      <div id="hk-rankings" class="rankings"></div>
+      <div class="table-wrap">
+        <table id="hk-table">
+          <thead>
+            <tr>
+              <th data-k="name">名称(代码)</th>
+              <th data-k="close" class="num">现价(HKD)</th>
+              <th data-k="pct" class="num">涨跌幅%</th>
+              <th data-k="pct_1m" class="num">近1月%</th>
+              <th data-k="pct_3m" class="num">近3月%</th>
+              <th data-k="dy" class="num">股息率TTM%</th>
+              <th data-k="dps" class="num">每股股息(HKD)</th>
+              <th data-k="div_ratio" class="num">派息比率%</th>
+              <th data-k="pe" class="num">市盈率TTM</th>
+              <th data-k="pb" class="num">市净率</th>
+              <th data-k="mv" class="num">总市值(亿港元)</th>
+              <th data-k="roe" class="num">ROE%</th>
+              <th data-k="ytd" class="num">年初至今%</th>
+              <th data-k="industry">行业</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="hk-info" class="muted"></div>
+    </section>
+
+    <section id="view-hk-detail" hidden>
+      <button id="hk-back" class="back">← 返回港股通列表</button>
+      <h2 id="hk-title"></h2>
+      <div id="hk-sub" class="muted"></div>
+      <div id="hk-cards" class="cards"></div>
+      <div class="toolbar chart-bar">
+        <div class="seg" id="hk-fq">
+          <button data-m="raw" class="active">未复权</button>
+          <button data-m="qfq">前复权</button>
+        </div>
+        <div class="seg" id="hk-period">
+          <button data-p="day" class="active">日K</button>
+          <button data-p="week">周K</button>
+          <button data-p="month">月K</button>
+        </div>
+        <span id="hk-fq-note" class="muted"></span>
+        <label><input type="checkbox" id="hk-ck-ma" checked> 均线(MA5/10/20/60)</label>
+        <label><input type="checkbox" id="hk-ck-boll"> BOLL(20,2)</label>
+        <label><input type="checkbox" id="hk-ck-dmi"> DMI(14)</label>
+      </div>
+      <div id="hk-chart"></div>
+
+      <div class="company-info">
+        <h3>分红数据（近12个月股息率 = 已实施每股派息 ÷ 现价）</h3>
+        <div id="hk-div-sum" class="ci-summary"></div>
+        <div class="table-wrap">
+          <table id="hk-div-table"><thead><tr>
+            <th>财政年度</th><th>分配类型</th><th class="num">每股派息(HKD)</th>
+            <th>除净日</th><th>发放日</th><th>方案</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+
+        <h3>财务绩效指标</h3>
+        <div class="fin-head">
+          <div class="seg" id="hk-fin-gran">
+            <button data-g="annual" class="active">年报</button>
+            <button data-g="q1">一季度</button>
+            <button data-g="half">二季度</button>
+            <button data-g="q3">三季度</button>
+          </div>
+        </div>
+        <div class="table-wrap fin-wrap">
+          <table id="hk-fin-table" class="fin-table"><thead></thead><tbody></tbody></table>
+        </div>
+        <button id="hk-fin-chart-toggle" class="mini-btn">展示指标图</button>
+        <div id="hk-fin-chart" hidden></div>
+      </div>
+    </section>
+
     <section id="view-detail" hidden>
       <button id="back" class="back">← 返回列表</button>
       <h2 id="d-title"></h2>
@@ -224,7 +302,7 @@
                 <th>年份(报告期)</th><th>分红方案</th><th class="num">每股现金(元)</th>
                 <th class="num">配送股折现(元)</th><th class="num">每股真实分红(元)</th>
                 <th class="num">除权日开盘(元)</th>
-                <th class="num" title="每股现金分红 ÷ 该年度年末前复权收盘价 × 100%">股息率%</th>
+                <th class="num" title="每股现金分红 ÷ 该年度不复权年末收盘价 × 100%">股息率%</th>
                 <th class="num">分红总额(亿元)</th><th class="num">分红比率</th>
               </tr></thead><tbody></tbody></table>
             </div>

@@ -14,6 +14,12 @@ const state = {
   funds: [], fundSort: { k: "scale_now", asc: false },
   fundSearch: "", view: "list", fundCurrent: null, fundChart: null,
   cbonds: { listed: [], pending: [] },
+  hkStocks: [], hkSnap: null, hkPy: null, hkLoaded: false,
+  hkSort: { k: "dy", asc: false }, hkSearch: "",
+  hkChart: null, hkK: null, hkRaw: null, hkDivs: null,
+  hkPeriod: "day", hkMode: "raw",
+  hkFinGran: "annual", hkFinChart: null, hkFinKey: null,
+  hkCurrent: null, hkCompany: null,
 };
 
 const fmt = (v, d = 2) =>
@@ -176,7 +182,8 @@ function renderBoards() {
 }
 
 function showView(name) {
-  ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds"].forEach((v) => {
+  ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
+   "hk", "hk-detail"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
@@ -184,6 +191,7 @@ function showView(name) {
   $("#tab-boards").classList.toggle("active", name === "boards");
   $("#tab-funds").classList.toggle("active", name === "funds" || name === "fund-detail");
   $("#tab-cbonds").classList.toggle("active", name === "cbonds");
+  $("#tab-hk").classList.toggle("active", name === "hk" || name === "hk-detail");
   state.view = name;
   window.scrollTo(0, 0);
 }
@@ -593,7 +601,7 @@ function renderDividend(dd, it) {
     const extra = (y.ex_open && st) ? fmt(y.ex_open * st, 3) : "—";
     const real = y.per_share_real != null ? fmt(y.per_share_real, 3) : "—";
     const exOpen = y.ex_open == null ? "—" : fmt(y.ex_open, 2);
-    // 股息率口径：每股现金分红 ÷ 该年度年末前复权收盘价（网络原始数据，本地计算）
+    // 股息率口径：每股现金分红 ÷ 该年度不复权年末收盘价（本地计算；早年由新浪年线补齐）
     const rate = y.yield_annual != null ? fmt(y.yield_annual, 2) : "—";
     return `<tr><td>${y.year}</td><td class="plan-cell">${y.plan ? esc(y.plan) : "—"}</td>` +
       `<td class="num">${ps}</td><td class="num">${extra}</td>` +
@@ -764,8 +772,451 @@ function renderProfile(p) {
     (p.profile ? `<div class="pf-profile">${esc(p.profile)}</div>` : "");
 }
 
+// ==================== 港股通模块 ====================
+const HK_FIN_ROWS = [
+  ["roe", "净资产收益率(加权)", "%"],
+  ["eps", "每股收益(基本)", "HKD"],
+  ["eps_ttm", "每股收益(TTM)", "HKD"],
+  ["bps", "每股净资产", "HKD"],
+  ["pe", "市盈率(TTM)", ""],
+  ["pb", "市净率", ""],
+  ["revenue", "营业收入", "亿"],
+  ["profit", "归母净利润", "亿"],
+  ["gross_margin", "毛利率", "%"],
+  ["net_margin", "净利率", "%"],
+  ["debt_ratio", "资产负债率", "%"],
+  ["roa", "总资产收益率", "%"],
+  ["roic", "投入资本回报率", "%"],
+];
+
+async function loadHk() {
+  if (state.hkLoaded) return;
+  state.hkLoaded = true;
+  try {
+    const snap = await fetch("data/hk/snapshot.json").then((r) => r.json());
+    state.hkSnap = snap;
+    state.hkStocks = snap.items || [];
+    state.hkPy = new Map();
+    state.hkStocks.forEach((s) => state.hkPy.set(s.code, initials(s.name || "")));
+    const meta = $("#meta");
+    if (meta && snap.total) {
+      meta.textContent += " · 港股通 " + snap.total + " 只";
+    }
+  } catch (e) {
+    console.error("港股通数据加载失败:", e);
+  }
+}
+
+function hkFiltered() {
+  let list = state.hkStocks.slice();
+  const q = state.hkSearch.trim().toLowerCase();
+  if (q) {
+    list = list.filter(
+      (s) =>
+        s.code.includes(q) ||
+        (s.name || "").toLowerCase().includes(q) ||
+        ((state.hkPy && state.hkPy.get(s.code)) || "").includes(q) ||
+        (s.industry || "").toLowerCase().includes(q)
+    );
+  }
+  const { k, asc } = state.hkSort;
+  list.sort((a, b) => {
+    const va = a[k], vb = b[k];
+    const na = va === null || va === undefined || va === "";
+    const nb = vb === null || vb === undefined || vb === "";
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    if (typeof va === "string" || typeof vb === "string")
+      return asc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    return asc ? va - vb : vb - va;
+  });
+  return list;
+}
+
+function hkRowHTML(s) {
+  const pct = s.pct == null ? null : Number(s.pct);
+  const pctCls = pct > 0 ? "red" : pct < 0 ? "green" : "";
+  const pctTxt = pct == null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
+  const m = (v) => v == null ? "—" : (v > 0 ? "+" : "") + fmt(v);
+  const mc = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+  return `<tr data-code="${s.code}">
+    <td class="stock-id">${esc(s.name || "—")}(${s.code})</td>
+    <td class="num">${fmt(s.close)}</td>
+    <td class="num ${pctCls}">${pctTxt}</td>
+    <td class="num ${mc(s.pct_1m)}">${m(s.pct_1m)}</td>
+    <td class="num ${mc(s.pct_3m)}">${m(s.pct_3m)}</td>
+    <td class="num">${fmt(s.dy)}</td>
+    <td class="num">${fmt(s.dps, 3)}</td>
+    <td class="num">${fmt(s.div_ratio)}</td>
+    <td class="num">${fmt(s.pe)}</td>
+    <td class="num">${fmt(s.pb)}</td>
+    <td class="num">${fmt(s.mv, 1)}</td>
+    <td class="num">${fmt(s.roe)}</td>
+    <td class="num ${mc(s.ytd)}">${m(s.ytd)}</td>
+    <td>${s.industry || "—"}</td></tr>`;
+}
+
+function renderHkList() {
+  const tbody = $("#hk-table tbody");
+  if (!tbody) return;
+  const list = hkFiltered();
+  tbody.innerHTML = list.map(hkRowHTML).join("");
+  const info = [`显示 ${list.length} / ${state.hkStocks.length} 只`];
+  if (state.hkSearch.trim()) info.push("搜索：" + state.hkSearch.trim());
+  const el = $("#hk-info");
+  if (el) el.textContent = info.join(" · ");
+  tbody.querySelectorAll("tr").forEach((tr) =>
+    tr.addEventListener("click", () => { location.hash = "#/hk/" + tr.dataset.code; })
+  );
+}
+
+function renderHkRankings() {
+  const box = $("#hk-rankings");
+  if (!box) return;
+  const all = state.hkStocks;
+  const block = (title, rows, key, emptyText) => {
+    if (!rows.length) {
+      if (!emptyText) return "";
+      return `<div class="rank-block"><div class="rank-title">${title}</div>` +
+        `<ol class="rank-list"><li class="rank-empty">${emptyText}</li></ol></div>`;
+    }
+    const items = rows.map((s, i) => {
+      const v = s[key];
+      const cls = v > 0 ? "red" : v < 0 ? "green" : "";
+      const txt = (v > 0 ? "+" : "") + fmt(v);
+      return `<li><span class="rk">${i + 1}</span>` +
+        `<span class="rc" data-code="${s.code}">${esc(s.name)}(${s.code})</span>` +
+        `<span class="rv num ${cls}">${txt}</span></li>`;
+    }).join("");
+    return `<div class="rank-block"><div class="rank-title">${title}</div><ol class="rank-list">${items}</ol></div>`;
+  };
+  const highDy = all.filter((s) => s.dy != null).sort((a, b) => b.dy - a.dy).slice(0, 10);
+  const down7 = all.filter((s) => s.down7 && s.pct_7d != null)
+    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const yin7 = all.filter((s) => s.yin7 && s.pct_7d != null)
+    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
+  const yang7 = all.filter((s) => s.yang7 && s.pct_7d != null)
+    .sort((a, b) => b.pct_7d - a.pct_7d).slice(0, 10);
+  box.innerHTML = block("股息率TTM Top10", highDy, "dy") +
+    block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +
+    block("连续7天阴线", yin7, "pct_7d", "今日暂无满足条件的股票") +
+    block("连续7天阳线", yang7, "pct_7d", "今日暂无满足条件的股票");
+  box.querySelectorAll(".rc").forEach((el) =>
+    el.addEventListener("click", () => { location.hash = "#/hk/" + el.dataset.code; })
+  );
+}
+
+function renderHkCards(it) {
+  const pct = it.pct == null ? null : Number(it.pct);
+  const cls = pct > 0 ? "red" : pct < 0 ? "green" : "";
+  const pctTxt = pct == null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
+  const cards = [
+    ["现价(HKD)", fmt(it.close), ""],
+    ["涨跌幅%", pctTxt, cls],
+    ["股息率TTM%", fmt(it.dy), ""],
+    ["每股股息(HKD)", fmt(it.dps, 3), ""],
+    ["派息比率%", fmt(it.div_ratio), ""],
+    ["市盈率TTM", fmt(it.pe), ""],
+    ["市净率", fmt(it.pb), ""],
+    ["总市值(亿港元)", fmt(it.mv, 1), ""],
+    ["ROE%", fmt(it.roe), ""],
+    ["年初至今%", fmt(it.ytd), ""],
+  ];
+  const el = $("#hk-cards");
+  if (el) {
+    el.innerHTML = cards
+      .map(([k, v, c]) => `<div class="card"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`)
+      .join("");
+  }
+}
+
+async function openHkDetail(code) {
+  showView("hk-detail");
+  state.hkCurrent = code;
+  state.hkFinGran = "annual";
+  state.hkFinKey = null;
+  state.hkCompany = null;
+  const it = state.hkStocks.find((x) => x.code === code) || {};
+  const t = $("#hk-title");
+  if (t) t.textContent = (it.name || code) + " (" + code + ")";
+  const sub = $("#hk-sub");
+  if (sub) {
+    let ld = it.list_date ? String(it.list_date) : "";
+    if (ld.length === 8) ld = ld.slice(0, 4) + "-" + ld.slice(4, 6) + "-" + ld.slice(6, 8);
+    sub.textContent = "港股通 · " + (it.industry || "—") +
+      (ld ? " · 上市日期 " + ld : "");
+  }
+  renderHkCards(it);
+  const [k, rw, comp] = await Promise.all([
+    fetch("data/hk/kline/" + code + ".json").then((r) => r.json()).catch(() => null),
+    fetch("data/hk/kline_raw/" + code + ".json").then((r) => r.json()).catch(() => null),
+    fetch("data/hk/company/" + code + ".json").then((r) => r.json()).catch(() => null),
+  ]);
+  state.hkK = k;
+  state.hkRaw = rw;
+  state.hkCompany = comp;
+  state.hkDivs = (comp && comp.dividend && comp.dividend.records)
+    ? comp.dividend.records.reduce((m, x) => { if (x.ex_date) m[x.ex_date] = x; return m; }, {})
+    : null;
+  try { hkRenderChart(); } catch (e) { console.error("hkRenderChart:", e); }
+  renderHkDividend((comp && comp.dividend) || {});
+  renderHkFinance((comp && comp.financial) || {});
+}
+
+function hkRenderChart() {
+  const el = $("#hk-chart");
+  if (!el) return;
+  if (!state.hkK || !state.hkK.bars || !state.hkK.bars.length) {
+    el.innerHTML = '<div class="muted" style="padding:20px">暂无K线数据</div>';
+    return;
+  }
+  if (!state.hkChart) {
+    state.hkChart = echarts.init(el);
+    window.addEventListener("resize", () => state.hkChart.resize());
+  }
+  let bars = state.hkK.bars;
+  const rawBars = state.hkRaw && state.hkRaw.bars && state.hkRaw.bars.length
+    ? state.hkRaw.bars : null;
+  if (state.hkMode === "raw" && rawBars) bars = rawBars;
+  const fqNote = $("#hk-fq-note");
+  if (fqNote) {
+    fqNote.textContent = (state.hkMode === "raw" && !rawBars)
+      ? "未复权数据未生成，暂显示前复权" : "";
+  }
+  if (state.hkPeriod !== "day") bars = aggregateBars(bars, state.hkPeriod);
+  const zoomStart = Math.max(0, 100 - 120 / bars.length * 100);
+  const dates = bars.map((b) => b.d);
+  const ohlc = bars.map((b) => [b.o, b.c, b.l, b.h]);
+  const vol = bars.map((b) => b.v);
+  const showMA = $("#hk-ck-ma").checked;
+  const showB = $("#hk-ck-boll").checked;
+  const showD = $("#hk-ck-dmi").checked;
+  const markData = (state.hkDivs && state.hkPeriod === "day")
+    ? bars.map((b) => (state.hkDivs[b.d] ? { coord: [b.d, b.l], value: "S" } : null))
+      .filter(Boolean)
+    : [];
+  const series = [{
+    name: "K线", type: "candlestick", data: ohlc,
+    itemStyle: {
+      color: "#d32f2f", color0: "#2e7d32",
+      borderColor: "#d32f2f", borderColor0: "#2e7d32",
+    },
+    markPoint: markData.length ? {
+      symbol: "circle", symbolSize: 15,
+      itemStyle: { color: "#b08500" },
+      label: { formatter: "S", color: "#fff", fontSize: 10, position: "inside" },
+      data: markData,
+    } : undefined,
+  }];
+  const legend = ["K线"];
+  if (showMA) {
+    [["MA5", ma(bars, 5), "#f6a800"], ["MA10", ma(bars, 10), "#e0439e"],
+     ["MA20", ma(bars, 20), "#1e5eff"], ["MA60", ma(bars, 60), "#7b1fa2"]]
+      .forEach(([n, d, c]) => { series.push(line(n, d, c)); legend.push(n); });
+  }
+  if (showB) {
+    const bl = boll(bars);
+    [["BOLL上", bl.map((x) => x && x[0]), "#f57c00"],
+     ["BOLL中", bl.map((x) => x && x[1]), "#f9a825"],
+     ["BOLL下", bl.map((x) => x && x[2]), "#f57c00"]]
+      .forEach(([n, d, c]) => { series.push(line(n, d, c)); legend.push(n); });
+  }
+  let sub;
+  if (showD) {
+    const dm = dmi(bars);
+    sub = [
+      line("+DI", dm.pdi, "#e53935"),
+      line("-DI", dm.ndi, "#43a047"),
+      line("ADX", dm.adx, "#1e88e5"),
+    ];
+    legend.push("+DI", "-DI", "ADX");
+  } else {
+    sub = [{
+      name: "成交量", type: "bar", xAxisIndex: 1, yAxisIndex: 1, data: vol,
+      itemStyle: { color: (p) => (bars[p.dataIndex].c >= bars[p.dataIndex].o ? "#d32f2f" : "#2e7d32") },
+    }];
+    legend.push("成交量");
+  }
+  series.push(...sub);
+  const option = {
+    animation: false,
+    legend: { data: legend, top: 0, type: "scroll", textStyle: { fontSize: 11 } },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross" },
+      formatter: (params) => {
+        const arr = Array.isArray(params) ? params : [params];
+        const first = arr[0];
+        const idx = first ? first.dataIndex : -1;
+        const d = idx >= 0 && bars[idx] ? bars[idx].d : "";
+        const lines = [];
+        const div = state.hkDivs && state.hkDivs[d];
+        if (div) {
+          lines.push("<b>" + d + " 除净</b>");
+          lines.push('<span style="color:#b08500">方案：' +
+            esc(div.plan || "—") + "</span>");
+        } else if (d) {
+          lines.push("<b>" + d + "</b>");
+        }
+        for (const p of arr) {
+          const nm = p.seriesName;
+          if (nm === "K线" && Array.isArray(p.value)) {
+            lines.push("开盘：" + p.value[0]);
+            lines.push("收盘：" + p.value[1]);
+            lines.push("最低：" + p.value[2]);
+            lines.push("最高：" + p.value[3]);
+          } else if (nm === "成交量") {
+            lines.push(p.marker + nm + "：" +
+              (p.value == null ? "—" : Number(p.value).toLocaleString()));
+          } else if (nm && nm !== "K线") {
+            lines.push(p.marker + nm + "：" +
+              (p.value == null ? "—" : Number(p.value).toFixed(2)));
+          }
+        }
+        return lines.join("<br>");
+      },
+    },
+    axisPointer: { link: [{ xAxisIndex: "all" }] },
+    grid: [
+      { left: 52, right: 16, top: 26, height: "58%" },
+      { left: 52, right: 16, top: "72%", height: "20%" },
+    ],
+    xAxis: [
+      {
+        type: "category", data: dates, boundaryGap: true,
+        axisLabel: { fontSize: 10, showMaxLabel: true },
+        axisLine: { lineStyle: { color: "#999" } },
+      },
+      {
+        type: "category", gridIndex: 1, data: dates, boundaryGap: true,
+        axisLabel: { show: false }, axisLine: { lineStyle: { color: "#999" } },
+      },
+    ],
+    yAxis: [
+      { scale: true, axisLabel: { fontSize: 10 } },
+      { gridIndex: 1, scale: true, axisLabel: { fontSize: 10 } },
+    ],
+    dataZoom: [
+      { type: "inside", xAxisIndex: [0, 1], start: zoomStart, end: 100 },
+      { type: "slider", xAxisIndex: [0, 1], bottom: 0, height: 18, start: zoomStart, end: 100 },
+    ],
+    series,
+  };
+  state.hkChart.setOption(option, true);
+}
+
+function renderHkDividend(dd) {
+  const sum = $("#hk-div-sum");
+  const recs = dd.records || [];
+  if (sum) {
+    sum.innerHTML =
+      `<span class="pill">股息率(TTM)：<b>${fmt(dd.dy, 2)}%</b></span>` +
+      `<span class="pill">近12个月每股派息：<b>${fmt(dd.ttm_dps, 3)} HKD</b></span>` +
+      `<span class="pill">派息比率(TTM)：<b>${fmt(dd.ttm_div_ratio, 1)}%</b></span>` +
+      `<span class="pill">分红记录：<b>${recs.length}</b> 笔</span>`;
+  }
+  const tb = $("#hk-div-table tbody");
+  if (!tb) return;
+  tb.innerHTML = recs.map((r) =>
+    `<tr><td>${r.year || "—"}</td><td>${esc(r.type || "—")}</td>` +
+    `<td class="num">${r.dps == null ? "—" : fmt(r.dps, 4)}</td>` +
+    `<td>${r.ex_date || "—"}</td><td>${r.pay_date || "—"}</td>` +
+    `<td class="plan-cell">${r.plan ? esc(r.plan) : "—"}</td></tr>`).join("");
+}
+
+function hkFinType(p) {
+  const t = p.rtype || "";
+  if (t.includes("年报")) return "annual";
+  if (t.includes("中报")) return "half";
+  if (t.includes("一季报")) return "q1";
+  if (t.includes("三季报")) return "q3";
+  return "annual";
+}
+
+function hkFinLabel(p) {
+  const y = (p.date || "").slice(0, 4);
+  const t = hkFinType(p);
+  return { q1: y + "Q1", half: y + "H1", q3: y + "Q3", annual: y }[t] || y;
+}
+
+function renderHkFinance(fin) {
+  const thead = $("#hk-fin-table thead");
+  const tbody = $("#hk-fin-table tbody");
+  if (!thead || !tbody) return;
+  const gran = state.hkFinGran;
+  const periods = (fin.periods || [])
+    .filter((p) => hkFinType(p) === gran)
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""))
+    .slice(-10)
+    .reverse();
+  thead.innerHTML = "<tr><th>指标</th>" +
+    periods.map((p) => `<th class="num">${hkFinLabel(p)}</th>`).join("") + "</tr>";
+  tbody.innerHTML = HK_FIN_ROWS.map(([k, name]) => {
+    const sel = state.hkFinKey === k ? ' class="sel"' : "";
+    return `<tr data-key="${k}"${sel}><td>${name}</td>` +
+      periods.map((p) => {
+        const v = p[k];
+        return `<td class="num">${v == null ? "—" : fmt(v, 2)}</td>`;
+      }).join("") + "</tr>";
+  }).join("");
+  tbody.querySelectorAll("tr[data-key]").forEach((tr) =>
+    tr.addEventListener("click", () => {
+      state.hkFinKey = (state.hkFinKey === tr.dataset.key) ? null : tr.dataset.key;
+      renderHkFinance(fin);
+      renderHkFinChart(fin);
+    })
+  );
+  renderHkFinChart(fin);
+}
+
+function renderHkFinChart(fin) {
+  const el = $("#hk-fin-chart");
+  const btn = $("#hk-fin-chart-toggle");
+  if (!el) return;
+  const fin2 = fin || {};
+  const periods = (fin2.periods || []).slice()
+    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const shown = !!state.hkFinKey && periods.length > 0;
+  el.hidden = !shown;
+  if (btn) btn.textContent = shown ? "收起指标图" : "展示指标图";
+  if (!shown) return;
+  const k = state.hkFinKey;
+  const row = HK_FIN_ROWS.find((r) => r[0] === k) || [k, k, ""];
+  if (!state.hkFinChart) {
+    state.hkFinChart = echarts.init(el);
+    window.addEventListener("resize", () => state.hkFinChart && state.hkFinChart.resize());
+  }
+  state.hkFinChart.setOption({
+    animation: false,
+    grid: { left: 10, right: 16, top: 28, bottom: 44, containLabel: true },
+    tooltip: { trigger: "axis" },
+    legend: { data: [row[1]], top: 0, textStyle: { fontSize: 11 } },
+    xAxis: { type: "category", data: periods.map((p) => p.date || ""),
+             axisLabel: { fontSize: 10, rotate: 30 } },
+    yAxis: { type: "value", scale: true, axisLabel: { fontSize: 10 } },
+    series: [{
+      name: row[1], type: "line", smooth: true, connectNulls: false,
+      data: periods.map((p) => (p[k] == null ? null : p[k])),
+    }],
+    dataZoom: [{ type: "inside" }],
+  }, true);
+}
+
 function route() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/hk/")) {
+    loadHk().then(() => openHkDetail(decodeURIComponent(h.slice(5))));
+    return;
+  }
+  if (h.startsWith("#/hk")) {
+    loadHk().then(() => {
+      renderHkList();
+      try { renderHkRankings(); } catch (e) { /* 榜单异常不影响列表 */ }
+      showView("hk");
+    });
+    return;
+  }
   if (h.startsWith("#/fund/")) {
     openFundDetail(decodeURIComponent(h.slice(7)));
     return;
@@ -1131,6 +1582,9 @@ function setupEvents() {
     if (state.view === "funds" || state.view === "fund-detail") {
       state.fundSearch = q;
       renderFunds();
+    } else if (state.view === "hk" || state.view === "hk-detail") {
+      state.hkSearch = q;
+      renderHkList();
     } else {
       state.search = q;
       renderList();
@@ -1148,9 +1602,19 @@ function setupEvents() {
   $("#tab-boards").addEventListener("click", () => { location.hash = "#/boards"; });
   $("#tab-funds").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#tab-cbonds").addEventListener("click", () => { location.hash = "#/cbonds"; });
+  $("#tab-hk").addEventListener("click", () => { location.hash = "#/hk"; });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
   $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
+  $("#hk-back").addEventListener("click", () => { location.hash = "#/hk"; });
   $("#tag-back").addEventListener("click", () => { location.hash = "#/"; });
+  document.querySelectorAll("#hk-table th[data-k]").forEach((th) =>
+    th.addEventListener("click", () => {
+      const k = th.dataset.k;
+      if (state.hkSort.k === k) state.hkSort.asc = !state.hkSort.asc;
+      else state.hkSort = { k, asc: k === "code" || k === "name" || k === "industry" };
+      renderHkList();
+    })
+  );
   document.querySelectorAll("#fund-table th[data-k]").forEach((th) =>
     th.addEventListener("click", () => {
       const k = th.dataset.k;
@@ -1161,6 +1625,9 @@ function setupEvents() {
   );
   ["ck-ma", "ck-boll", "ck-dmi"].forEach((id) =>
     document.getElementById(id).addEventListener("change", renderChart)
+  );
+  ["hk-ck-ma", "hk-ck-boll", "hk-ck-dmi"].forEach((id) =>
+    document.getElementById(id).addEventListener("change", hkRenderChart)
   );
   document.querySelectorAll("#k-period button").forEach((b) =>
     b.addEventListener("click", () => {
@@ -1178,6 +1645,22 @@ function setupEvents() {
       renderChart();
     })
   );
+  document.querySelectorAll("#hk-period button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#hk-period button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.hkPeriod = b.dataset.p;
+      hkRenderChart();
+    })
+  );
+  document.querySelectorAll("#hk-fq button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#hk-fq button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.hkMode = b.dataset.m;
+      hkRenderChart();
+    })
+  );
   document.querySelectorAll("#fin-gran button").forEach((b) =>
     b.addEventListener("click", () => {
       document.querySelectorAll("#fin-gran button").forEach((x) => x.classList.remove("active"));
@@ -1186,6 +1669,19 @@ function setupEvents() {
       if (state.company) renderFinance(state.company.finance || {});
     })
   );
+  document.querySelectorAll("#hk-fin-gran button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#hk-fin-gran button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.hkFinGran = b.dataset.g;
+      if (state.hkCompany) renderHkFinance(state.hkCompany.financial || {});
+    })
+  );
+  $("#hk-fin-chart-toggle").addEventListener("click", () => {
+    if (!state.hkFinKey) state.hkFinKey = "roe";
+    else state.hkFinKey = null;
+    renderHkFinance((state.hkCompany && state.hkCompany.financial) || {});
+  });
   // 标签点击 -> 站内标签页（事件委托，兼容列表/标签页）
   document.addEventListener("click", (e) => {
     const t = e.target.closest && e.target.closest(".tag");

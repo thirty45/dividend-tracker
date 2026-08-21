@@ -44,6 +44,7 @@ th { background: #fafbfc; cursor: pointer; user-select: none; }
 th.num, td.num { text-align: right; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f0f4ff; }
+.fin-table tbody tr.sel td { background: #e8f0fe; font-weight: 600; }
 tbody tr:last-child td { border-bottom: none; }
 /* 列表/基金/转债表首列（名称(代码)）固定：横向滚动查看其他指标时保持可见 */
 #stock-table td:first-child, #tag-table td:first-child, #fund-table td:first-child,
@@ -76,6 +77,7 @@ tbody tr:last-child td { border-bottom: none; }
 .chart-bar label { display: inline-flex; align-items: center; gap: 4px; font-size: 13px;
   background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; }
 #chart { height: 62vh; min-height: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+#hk-chart { height: 62vh; min-height: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
 .trends { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
 .trends .t { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
 .trends .t h4 { margin: 4px 6px; font-size: 13px; }
@@ -149,6 +151,7 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .seg button.active { background: var(--blue); color: #fff; }
 .fin-title { font-size: 13px; font-weight: 600; color: var(--text); }
 #finance-chart { height: 300px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+#hk-fin-chart { height: 300px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
 
 /* 高管增减持 */
 #exec-table .red, #exec-table .green { font-weight: 600; }
