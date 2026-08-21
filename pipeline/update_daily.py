@@ -157,13 +157,31 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
 
         div = (comp or {}).get("dividend", {}) or {}
         years = div.get("years", []) or []
-        # 年度股息率（与“近5年平均股息率”同一口径）：每股现金分红 ÷ 该年度年末前复权收盘价。
-        # per_share 来自东财分红送配报表，价格来自东财前复权K线，均为网络原始数据。
-        year_close_qfq = {}
-        for b in bars:
+        # 年度股息率口径：每股现金分红 ÷ 该年度「不复权」年末收盘价。
+        # 前复权价会把历史股价按后续分红回溯压低，导致股息率虚高（如中石化2021年
+        # 前复权价2.73→股息率17% vs 真实不复权价4.23→11%）。因此统一用不复权价，
+        # 这也是投资者当年实际成本价、口径更贴近“当年真实股息率”。
+        # 数据源：优先不复权K线(data/kline_raw)；早年(东财K线仅到2019/2021)用新浪
+        # 年线补齐（已验证新浪年线年末收盘与东财不复权逐项一致）。
+        year_close_raw = {}
+        for b in (raw_klines.get(code) or []):
             d = b.get("d") or b.get("date") or ""
             if len(d) >= 4:
-                year_close_qfq[d[:4]] = b.get("c")  # 同年度保留最后（年末收盘）
+                year_close_raw[d[:4]] = b.get("c")  # 同年度保留最后（年末收盘）
+        # 早年/缺失年份：用新浪年线补齐（仅当该年不复权K线没有收盘价）
+        need_sina = False
+        for y in years:
+            yr = str(y.get("year"))
+            if y.get("per_share") is not None and yr not in year_close_raw:
+                need_sina = True
+                break
+        if need_sina:
+            try:
+                sina_yearly = sm.fetch_sina_yearly_close(code)
+            except Exception:  # noqa: BLE001
+                sina_yearly = {}
+            for kk, vv in sina_yearly.items():
+                year_close_raw.setdefault(kk, vv)
         # 除权日开盘价（未复权）：
         #   1) 优先从未复权K线(数据/raw klines)里取当天的开盘价；
         #   2) 缺失时回退到单独抓取的 raw_opens（送转折算用）。
@@ -185,7 +203,7 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
                 ex_open = raw.get(exd)
             y["ex_open"] = ex_open
             ps = y.get("per_share")
-            c_end = year_close_qfq.get(str(y.get("year")))
+            c_end = year_close_raw.get(str(y.get("year")))
             yn = (round(ps / c_end * 100.0, 2)
                   if ps is not None and c_end else None)
             if y.get("yield_annual") != yn:
@@ -244,10 +262,10 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         it["pb5"] = round(sum(pb_list) / len(pb_list), 2) if pb_list else None
         it["div_yield_5y"] = round(sum(dy_list) / len(dy_list), 2) if dy_list else None
 
-        # 连续2年股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；年度股息率=每股分红/年末收盘价）
+        # 连续2年股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；年度股息率=每股分红/不复权年末收盘价）
         dy_vals = []
         for yr in (today.year - 1, today.year - 2):
-            c = year_close_qfq.get(str(yr))
+            c = year_close_raw.get(str(yr))
             if not c:
                 break
             d = dps_by_year.get(yr)

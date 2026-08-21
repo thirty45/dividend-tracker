@@ -13,6 +13,44 @@ CLIST_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 SINA_INDEX_URL = ("http://vip.stock.finance.sina.com.cn/corp/go.php/"
                   "vII_NewestComponent/indexid/%s.phtml")
+# 新浪历史K线接口：scale=86400（秒）= 年K线，返回上市以来每年末不复权收盘价。
+# 经验证与东财不复权日K线年末收盘价逐项一致，可用于补齐早年（东财K线仅到2019/2021）。
+SINA_KLINE_URL = ("https://money.finance.sina.com.cn/quotes_service/"
+                  "api/json_v2.php/CN_MarketData.getKLineData")
+
+
+def fetch_sina_yearly_close(code):
+    """新浪年K线 -> {年份(4位): 年末不复权收盘价}，覆盖上市以来全历史。
+
+    数据源：新浪 CN_MarketData.getKLineData，scale=86400 表示年线。
+    返回 dict（含当年至今的"年末"为最新交易日收盘），失败返回空 dict。
+    """
+    if code.startswith(("6", "9", "5")):
+        mkt = "sh"
+    else:
+        mkt = "sz"
+    sym = mkt + code
+    try:
+        j = fetch_json(
+            SINA_KLINE_URL,
+            params={"symbol": sym, "scale": "86400", "ma": "no",
+                    "datalen": "1023"},
+            referer="https://finance.sina.com.cn/",
+            timeout=20, retries=3, delay=1.0)
+    except Exception:  # noqa: BLE001
+        return {}
+    if not isinstance(j, list):
+        return {}
+    out = {}
+    for r in j:
+        day = (r.get("day") or "")[:4]
+        try:
+            close = float(r.get("close"))
+        except (TypeError, ValueError):
+            continue
+        if len(day) == 4 and close > 0:
+            out[day] = close
+    return out
 
 
 def latest_trade_date():

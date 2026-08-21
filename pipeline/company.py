@@ -121,6 +121,9 @@ def fetch_finance(code):
     # 解析每条报告期为统一结构
     periods = []
     annual_netprofit = {}  # 年份 -> 年度净利润(亿)，用于分红比率
+    # 每个报告期净利润(亿)，key=REPORT_DATE(YYYY-MM-DD) -> netprofit，
+    # 供分红比率分母按「分红报告期」精确匹配（中报分红对中报净利、年报分红对年报净利）。
+    netprofit_by_rpt = {}
     for r in rows:
         rd = (r.get("REPORT_DATE") or "")[:10]
         if len(rd) < 4:
@@ -149,10 +152,11 @@ def fetch_finance(code):
             "date": rd, "year": year, "type": g, "rtype": rtype,
             "vals": vals,
         })
-        if g == "annual":
-            npv = vals.get("PARENTNETPROFIT")
-            if npv is not None:
-                annual_netprofit[year] = npv
+        npv = vals.get("PARENTNETPROFIT")
+        if g == "annual" and npv is not None:
+            annual_netprofit[year] = npv
+        if npv is not None and rd:
+            netprofit_by_rpt[rd] = npv
 
     # 同比：按 (type, year) 找上一年同类型
     def find_prev(g, year):
@@ -201,7 +205,8 @@ def fetch_finance(code):
         for p in periods_sorted if p["year"] >= FIN_START_YEAR
     ]
     return {"periods": periods_out, "groups": groups,
-            "annual_netprofit": annual_netprofit}
+            "annual_netprofit": annual_netprofit,
+            "netprofit_by_rpt": netprofit_by_rpt}
 
 
 def fetch_holders(code):
@@ -229,7 +234,7 @@ def fetch_holders(code):
             "top10": top10}
 
 
-def fetch_dividend(code, annual_netprofit):
+def fetch_dividend(code, annual_netprofit, netprofit_by_rpt=None):
     """分红数据：按「报告期年度」归属（2025 年 = 2025 年报期宣告的分红，
     而非 2025 年实际派发；派发日归属会把 2024 年报的分红错记到 2025 年）。
 
@@ -240,7 +245,13 @@ def fetch_dividend(code, annual_netprofit):
     每个报告年度合并一条：每股现金分红=该年度各笔(中期+年度)合计；
     送/转股比例=合计；方案文本=各笔合并；total_div=Σ(每股派息×总股本)。
     配送股现金等价（除权后开盘价×每股配送股数）由 update_daily.py 用 K线补算为
-    ex_open / per_share_real。"""
+    ex_open / per_share_real。
+
+    分红比率(ratio)：分子=分红总额，分母=该报告年度净利润(亿)。
+    优先用「年报净利」；当某年（如当前 2026 年）年报尚未发布、但已有该年
+    中期/一季报净利时，回退用该年「最新已发布报告期」净利，避免分红率缺失。
+    netprofit_by_rpt: {REPORT_DATE(YYYY-MM-DD): 归母净利润(亿)}，用于回退匹配。
+    """
     rows = _dc("RPT_SHAREBONUS_DET", '(SECURITY_CODE="%s")' % code,
                sort="REPORT_DATE", page_size=200)
     by_year = {}
@@ -259,6 +270,7 @@ def fetch_dividend(code, annual_netprofit):
         g = by_year.setdefault(year, {
             "per_share": 0.0, "send_ratio": 0.0, "trans_ratio": 0.0,
             "total_div": 0.0, "plans": [], "ex_dates": [], "has_st": False,
+            "rpt_dates": set(),                  # 记录该年出现过的真实报告期
         })
         if per10 is not None:
             g["per_share"] += per10 / 10.0
@@ -272,6 +284,8 @@ def fetch_dividend(code, annual_netprofit):
             g["has_st"] = True
         if plan not in g["plans"]:
             g["plans"].append(plan)
+        if rp:
+            g["rpt_dates"].add(rp)
         ex_date = (r.get("EX_DIVIDEND_DATE") or "")[:10]
         if len(ex_date) == 10:
             g["ex_dates"].append(ex_date)
@@ -291,6 +305,17 @@ def fetch_dividend(code, annual_netprofit):
         if not ex_date and g["ex_dates"]:
             ex_date = g["ex_dates"][-1]
         npv = annual_netprofit.get(y)
+        if not npv and netprofit_by_rpt:
+            # 年报净利缺失（如当年年报未发布）：回退用该年最新已发布报告期净利
+            cur = None
+            for rp in g["rpt_dates"]:
+                if rp[:4] != str(y):
+                    continue
+                v = netprofit_by_rpt.get(rp)
+                if v is not None and (cur is None or rp > cur):
+                    cur = rp
+            if cur:
+                npv = netprofit_by_rpt.get(cur)
         ratio = (round(g["total_div"] / 1e8 / npv * 100.0, 2)
                  if npv and g["total_div"] else None)
         years.append({
@@ -366,7 +391,9 @@ def fetch_company(code, name=""):
         "name": name or code,
         "updated": now,
         "holders": fetch_holders(code),
-        "dividend": fetch_dividend(code, finance.get("annual_netprofit", {})),
+        "dividend": fetch_dividend(
+            code, finance.get("annual_netprofit", {}),
+            finance.get("netprofit_by_rpt", {})),
         "finance": {"periods": finance.get("periods", []),
                     "groups": finance.get("groups", {})},
         "executives": fetch_executives(code),
