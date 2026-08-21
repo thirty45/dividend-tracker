@@ -388,32 +388,42 @@ def _fetch_kline_tencent(code, beg, end):
         mkt = "sz"
     sym = mkt + code
     bars = []
+    # 增量窗口：按 beg 距今自然日估算需要的根数（每天约1.4根，留裕量）
+    gap_count = 700
     try:
-        j = fetch_json(
-            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,%s,2023-12-31,1000,qfq"
-                    % (sym, _norm_date(beg))},
-            referer="https://gu.qq.com/", timeout=15,
-            retries=2, delay=1.0)
-        d = (j.get("data") or {}).get(sym) or {}
-        rows = d.get("qfqday") or d.get("day") or []
-        for row in rows:
-            if len(row) < 6:
-                continue
-            try:
-                bars.append({
-                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                    "h": float(row[3]), "l": float(row[4]),
-                    "v": float(row[5])})
-            except ValueError:
-                continue
+        bd = datetime.date.fromisoformat(_norm_date(beg))
+        gap_days = (datetime.date.today() - bd).days
+        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
     except Exception:  # noqa: BLE001
         pass
-    # 最近段：count 接口返回最近约640根且含最新交易日
+    # 历史段：仅当 beg 早于 2024 才需要（否则会拉空，纯浪费）
+    if str(beg).replace("-", "") < "20240101":
+        try:
+            j = fetch_json(
+                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+                params={"param": "%s,day,%s,2023-12-31,1000,qfq"
+                        % (sym, _norm_date(beg))},
+                referer="https://gu.qq.com/", timeout=15,
+                retries=2, delay=1.0)
+            d = (j.get("data") or {}).get(sym) or {}
+            rows = d.get("qfqday") or d.get("day") or []
+            for row in rows:
+                if len(row) < 6:
+                    continue
+                try:
+                    bars.append({
+                        "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                        "h": float(row[3]), "l": float(row[4]),
+                        "v": float(row[5])})
+                except ValueError:
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
+    # 最近段：count 接口返回最近 N 根且含最新交易日
     try:
         j2 = fetch_json(
             "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,,,700,qfq" % sym},
+            params={"param": "%s,day,,,%d,qfq" % (sym, gap_count)},
             referer="https://gu.qq.com/", timeout=15,
             retries=2, delay=1.0)
         d2 = (j2.get("data") or {}).get(sym) or {}
@@ -543,30 +553,38 @@ def _fetch_kline_tencent_raw(code, beg, end):
         mkt = "sz"
     sym = mkt + code
     bars = []
+    gap_count = 700
     try:
-        j = fetch_json(
-            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,%s,2023-12-31,1000,"
-                    % (sym, _norm_date(beg))},
-            referer="https://gu.qq.com/", timeout=15,
-            retries=2, delay=1.0)
-        rows = ((j.get("data") or {}).get(sym) or {}).get("day") or []
-        for row in rows:
-            if len(row) < 6:
-                continue
-            try:
-                bars.append({
-                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                    "h": float(row[3]), "l": float(row[4]),
-                    "v": float(row[5])})
-            except ValueError:
-                continue
+        bd = datetime.date.fromisoformat(_norm_date(beg))
+        gap_days = (datetime.date.today() - bd).days
+        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
     except Exception:  # noqa: BLE001
         pass
+    if str(beg).replace("-", "") < "20240101":
+        try:
+            j = fetch_json(
+                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+                params={"param": "%s,day,%s,2023-12-31,1000,"
+                        % (sym, _norm_date(beg))},
+                referer="https://gu.qq.com/", timeout=15,
+                retries=2, delay=1.0)
+            rows = ((j.get("data") or {}).get(sym) or {}).get("day") or []
+            for row in rows:
+                if len(row) < 6:
+                    continue
+                try:
+                    bars.append({
+                        "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                        "h": float(row[3]), "l": float(row[4]),
+                        "v": float(row[5])})
+                except ValueError:
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
     try:
         j2 = fetch_json(
             "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,,,700," % sym},
+            params={"param": "%s,day,,,%d," % (sym, gap_count)},
             referer="https://gu.qq.com/", timeout=15,
             retries=2, delay=1.0)
         rows2 = ((j2.get("data") or {}).get(sym) or {}).get("day") or []

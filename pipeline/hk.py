@@ -94,26 +94,34 @@ def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
     end_d = _norm_date(end)
     adj = "qfq" if qfq else ""
     bars = []
-    # 历史段（beg -> 2023-12-31，最多 1000 根）
+    # 增量窗口：按 beg 距今自然日估算需要的根数，避免总是拉最近700根
+    gap_count = 700
     try:
-        j = fetch_json(KLINE_URL, params={
-            "param": "%s,day,%s,2023-12-31,1000,%s" % (sym, beg_d, adj)},
-            referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
-        for row in ((j.get("data") or {}).get(sym) or {}).get("day") or []:
-            if len(row) < 6:
-                continue
-            try:
-                bars.append({"d": row[0], "o": float(row[1]), "c": float(row[2]),
-                             "h": float(row[3]), "l": float(row[4]),
-                             "v": float(row[5])})
-            except ValueError:
-                continue
+        gap_days = (datetime.date.today() - datetime.date.fromisoformat(beg_d)).days
+        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
     except Exception:  # noqa: BLE001
         pass
-    # 近段（最近 700 根，覆盖到今天）
+    # 历史段（beg -> 2023-12-31，最多 1000 根）
+    if beg_d.replace("-", "") < "20240101":
+        try:
+            j = fetch_json(KLINE_URL, params={
+                "param": "%s,day,%s,2023-12-31,1000,%s" % (sym, beg_d, adj)},
+                referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+            for row in ((j.get("data") or {}).get(sym) or {}).get("day") or []:
+                if len(row) < 6:
+                    continue
+                try:
+                    bars.append({"d": row[0], "o": float(row[1]), "c": float(row[2]),
+                                 "h": float(row[3]), "l": float(row[4]),
+                                 "v": float(row[5])})
+                except ValueError:
+                    continue
+        except Exception:  # noqa: BLE001
+            pass
+    # 近段（最近 gap_count 根，覆盖到今天）
     try:
         j2 = fetch_json(KLINE_URL, params={
-            "param": "%s,day,,,700,%s" % (sym, adj)},
+            "param": "%s,day,,,%d,%s" % (sym, gap_count, adj)},
             referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
         for row in ((j2.get("data") or {}).get(sym) or {}).get("day") or []:
             if len(row) < 6:
@@ -285,6 +293,29 @@ def _streak_below_boll(bars, n=5, period=20, k=2.0):
                for i in range(len(bars) - n, len(bars)))
 
 
+def _shift_days(d, days):
+    """日期(YYYY-MM-DD 或 YYYYMMDD)平移 N 天 -> YYYYMMDD；异常返回 None。"""
+    s = str(d or "").replace("-", "")
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        dt = datetime.date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    except ValueError:
+        return None
+    return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _merge_bars(old, new, keep=1500):
+    """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
+    by = {}
+    for b in old or []:
+        by[b["d"]] = b
+    for b in new or []:
+        by[b["d"]] = b
+    bars = [by[d] for d in sorted(by)]
+    return bars[-keep:] if keep else bars
+
+
 def _fin_vals(row):
     """把一条主要指标行转成常用字段 dict。"""
     return {
@@ -332,20 +363,71 @@ def build():
     codes = sorted(comps.keys())
     klines = {}
     raws = {}
+    full_dates = {}
     done = [0]
+    todo = []          # (code, 已有qfq bars, 已有raw bars, 是否全量, full_date)
+    full_interval = 7
+    for c in codes:
+        ab = rb = None
+        af = rf = ""
+        pa = os.path.join(kdir, c + ".json")
+        pr = os.path.join(rdir, c + ".json")
+        if os.path.exists(pa):
+            try:
+                with open(pa, encoding="utf-8") as f:
+                    old = json.load(f)
+                ab = old.get("bars") or []
+                af = old.get("full_date") or ""
+            except Exception:  # noqa: BLE001
+                ab = None
+        if os.path.exists(pr):
+            try:
+                with open(pr, encoding="utf-8") as f:
+                    old = json.load(f)
+                rb = old.get("bars") or []
+                rf = old.get("full_date") or ""
+            except Exception:  # noqa: BLE001
+                rb = None
+        cur = (ab and rb and ab[-1].get("d", "") >= today
+               and rb[-1].get("d", "") >= today)
+        if cur:
+            klines[c], raws[c] = ab, rb
+            continue
+        need_full = not ab or not rb
+        if not need_full:
+            try:
+                last_full = datetime.date.fromisoformat(af or rf or "")
+                if (datetime.date.today() - last_full).days >= full_interval:
+                    need_full = True
+            except ValueError:
+                need_full = True
+        todo.append((c, ab or [], rb or [], need_full, af or rf or today))
 
-    def _pair(c):
-        return fetch_hk_kline(c, qfq=True), fetch_hk_kline(c, qfq=False)
+    def _pair(item):
+        c, ab, rb, need_full, full_date = item
+        beg = KLINE_START
+        if not need_full and ab:
+            beg = _shift_days(ab[-1]["d"], -15) or beg
+        bars = fetch_hk_kline(c, beg=beg, qfq=True)
+        rbeg = beg
+        if not need_full and rb:
+            rbeg = _shift_days(rb[-1]["d"], -15) or rbeg
+        rbars = fetch_hk_kline(c, beg=rbeg, qfq=False)
+        merged = _merge_bars([] if need_full else ab, bars)
+        merged_raw = _merge_bars([] if need_full else rb, rbars)
+        full = today if need_full else full_date
+        return c, merged, merged_raw, full
 
     with ThreadPoolExecutor(max_workers=16) as ex:
-        futs = {ex.submit(_pair, c): c for c in codes}
+        futs = {ex.submit(_pair, item): item[0] for item in todo}
         for fut in as_completed(futs):
             c = futs[fut]
             try:
-                bars, rbars = fut.result()
-                klines[c], raws[c] = bars, rbars
+                c2, bars, rbars, full_date = fut.result()
             except Exception:  # noqa: BLE001
-                klines[c], raws[c] = [], []
+                c2, bars, rbars, full_date = c, [], [], today
+            klines[c2], raws[c2] = bars, rbars
+            full_dates[c2] = full_date
             done[0] += 1
             if done[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done[0], len(codes)), flush=True)
@@ -354,11 +436,15 @@ def build():
         def _write(c):
             with open(os.path.join(kdir, c + ".json"), "w", encoding="utf-8") as f:
                 json.dump({"code": c, "name": comps[c].get("f14", ""),
-                           "date": today, "updated": now, "bars": klines.get(c, [])},
+                           "date": today, "updated": now,
+                           "full_date": full_dates.get(c, today),
+                           "bars": klines.get(c, [])},
                           f, ensure_ascii=False)
             with open(os.path.join(rdir, c + ".json"), "w", encoding="utf-8") as f:
                 json.dump({"code": c, "name": comps[c].get("f14", ""),
-                           "date": today, "updated": now, "bars": raws.get(c, [])},
+                           "date": today, "updated": now,
+                           "full_date": full_dates.get(c, today),
+                           "bars": raws.get(c, [])},
                           f, ensure_ascii=False)
         list(ex.map(_write, codes))
     print("   K线完成 %d/%d" % (len(codes), len(codes)), flush=True)

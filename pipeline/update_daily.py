@@ -289,6 +289,29 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
     return items
 
 
+def _shift_days(d, days):
+    """日期(YYYY-MM-DD 或 YYYYMMDD)平移 N 天 -> YYYYMMDD；异常返回 None。"""
+    s = str(d or "").replace("-", "")
+    if len(s) != 8 or not s.isdigit():
+        return None
+    try:
+        dt = datetime.datetime.strptime(s, "%Y%m%d").date()
+    except ValueError:
+        return None
+    return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
+
+
+def _merge_bars(old, new, keep=1400):
+    """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
+    by = {}
+    for b in old or []:
+        by[b["d"]] = b
+    for b in new or []:
+        by[b["d"]] = b
+    bars = [by[d] for d in sorted(by)]
+    return bars[-keep:] if keep else bars
+
+
 def main():
     if sys.stdout and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -366,70 +389,98 @@ def main():
     print("4/5 抓取K线(并发) ...", flush=True)
     klines = {}
     raw_klines = {}
-    todo = []
+    todo = []          # (code, 已有前复权bars, 已有未复权bars, 是否全量, full_date)
+    today_iso = datetime.date.today().isoformat()
+    full_interval = cfg.get("kline_full_days", 7)
     for c in codes:
         pa = os.path.join(kline_dir, c + ".json")
         pr = os.path.join(raw_dir, c + ".json")
-        adj_ok = raw_ok = False
+        adj_bars = raw_bars = None
+        adj_full = raw_full = ""
         if not args.force and os.path.exists(pa):
             try:
                 with open(pa, encoding="utf-8") as f:
                     old = json.load(f)
-                if old.get("bars") and old["bars"][-1].get("d", "") >= kline_target:
-                    adj_ok = True
-                    klines[c] = old["bars"]
+                adj_bars = old.get("bars") or []
+                adj_full = old.get("full_date") or ""
             except Exception:  # noqa: BLE001
-                pass
+                adj_bars = None
         if not args.force and os.path.exists(pr):
             try:
                 with open(pr, encoding="utf-8") as f:
                     oldr = json.load(f)
-                if oldr.get("bars") and oldr["bars"][-1].get("d", "") >= kline_target:
-                    raw_ok = True
-                    raw_klines[c] = oldr["bars"]
+                raw_bars = oldr.get("bars") or []
+                raw_full = oldr.get("full_date") or ""
             except Exception:  # noqa: BLE001
-                pass
-        if not (adj_ok and raw_ok):
-            todo.append(c)
-    print("   待抓取K线 %d 只（前复权+未复权均最新 %d 只）"
-          % (len(todo), len(codes) - len(todo)),
+                raw_bars = None
+        cur_adj = bool(adj_bars and adj_bars[-1].get("d", "") >= kline_target)
+        cur_raw = bool(raw_bars and raw_bars[-1].get("d", "") >= kline_target)
+        if cur_adj and cur_raw:
+            klines[c] = adj_bars
+            raw_klines[c] = raw_bars
+            continue
+        need_full = args.force or not adj_bars or not raw_bars
+        if not need_full:
+            try:
+                last_full = datetime.date.fromisoformat(adj_full or raw_full or "")
+                if (datetime.date.today() - last_full).days >= full_interval:
+                    need_full = True
+            except ValueError:
+                need_full = True
+        todo.append((c, adj_bars or [], raw_bars or [],
+                     need_full, adj_full or raw_full or today_iso))
+    n_full = sum(1 for t in todo if t[3])
+    print("   待抓取K线 %d 只（全量 %d 只 · 增量 %d 只 · 已最新 %d 只）"
+          % (len(todo), n_full, len(todo) - n_full, len(codes) - len(todo)),
           flush=True)
     done_count = [0]
 
-    def _fetch_pair(c):
-        name, bars = sm.fetch_kline(c, cfg["kline_start"], "20500101",
-                                    kline_target)
-        rbars = sm.fetch_kline_raw(c, cfg["kline_start"], "20500101",
-                                   kline_target)
-        return c, name, bars, rbars
+    def _fetch_pair(item):
+        c, abars, rbars, need_full, full_date = item
+        beg = cfg["kline_start"]
+        if not need_full and abars:
+            beg = _shift_days(abars[-1]["d"], -15) or beg
+        name, bars = sm.fetch_kline(c, beg, "20500101", kline_target)
+        rbeg = beg
+        if not need_full and rbars:
+            rbeg = _shift_days(rbars[-1]["d"], -15) or rbeg
+        rbars_new = sm.fetch_kline_raw(c, rbeg, "20500101", kline_target)
+        keep = cfg.get("history_keep", 1400)
+        merged = _merge_bars([] if need_full else abars, bars, keep)
+        merged_raw = _merge_bars([] if need_full else rbars, rbars_new, keep)
+        full = today_iso if need_full else full_date
+        return c, name, merged, merged_raw, full
 
     with ThreadPoolExecutor(max_workers=cfg.get("workers", 6)) as ex:
-        futs = {ex.submit(_fetch_pair, c): c
-                for c in todo}
+        futs = {ex.submit(_fetch_pair, item): item[0]
+                for item in todo}
         now_iso = datetime.datetime.now().isoformat(timespec="seconds")
         for fut in as_completed(futs):
+            c = futs[fut]
             try:
-                c, name, bars, rbars = fut.result()
-                klines[c] = bars
-                raw_klines[c] = rbars
-                if name:
-                    name_map[c] = name
+                c2, name, bars, rbars, full_date = fut.result()
             except Exception as exc:  # noqa: BLE001
-                c = futs[fut]
+                c2 = c
                 print("   K线失败 %s: %s" % (c, exc), flush=True)
-                klines[c] = []
-                raw_klines[c] = []
+                name = name_map.get(c, "")
+                bars, rbars, full_date = [], [], today_iso
+            klines[c2] = bars
+            raw_klines[c2] = rbars
+            if name:
+                name_map[c2] = name
             # 边抓边写，断点可续
-            path = os.path.join(kline_dir, c + ".json")
+            path = os.path.join(kline_dir, c2 + ".json")
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"code": c, "name": name_map.get(c, ""),
+                json.dump({"code": c2, "name": name_map.get(c2, ""),
                            "date": kline_target, "updated": now_iso,
-                           "bars": klines[c]}, f, ensure_ascii=False)
-            pathr = os.path.join(raw_dir, c + ".json")
+                           "full_date": full_date,
+                           "bars": klines[c2]}, f, ensure_ascii=False)
+            pathr = os.path.join(raw_dir, c2 + ".json")
             with open(pathr, "w", encoding="utf-8") as f:
-                json.dump({"code": c, "name": name_map.get(c, ""),
+                json.dump({"code": c2, "name": name_map.get(c2, ""),
                            "date": kline_target, "updated": now_iso,
-                           "bars": raw_klines[c]}, f, ensure_ascii=False)
+                           "full_date": full_date,
+                           "bars": raw_klines[c2]}, f, ensure_ascii=False)
             done_count[0] += 1
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)

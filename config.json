@@ -30,6 +30,7 @@
   "min_yield_years": 3,
   "min_yield_pct": 1.0,
   "kline_start": "20200101",
+  "kline_full_days": 7,
   "history_keep": 1400,
   "workers": 16,
   "company_cache_days": 30,

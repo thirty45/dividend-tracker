@@ -30,6 +30,19 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: 恢复K线缓存
+        id: kline-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/kline
+            data/kline_raw
+            data/hk/kline
+            data/hk/kline_raw
+          key: kline-${{ github.run_id }}
+          restore-keys: |
+            kline-
+
       - name: 每日更新数据
         run: python pipeline/update_daily.py
         env:
@@ -51,6 +64,18 @@ jobs:
         run: python pipeline/hk.py
         env:
           PYTHONUNBUFFERED: '1'
+
+      - name: 保存K线缓存
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/kline
+            data/kline_raw
+            data/hk/kline
+            data/hk/kline_raw
+          key: kline-${{ github.run_id }}
 
       - name: 提交数据变更
         run: |
