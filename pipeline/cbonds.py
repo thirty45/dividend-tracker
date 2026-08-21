@@ -20,6 +20,7 @@ import json
 import math
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -37,6 +38,14 @@ ANN_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
 UT = "bd1d9ddb04089700cf9c27f6f7426281"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+# 正股行情/过会日期抓取的硬性时限（秒）：网络慢或东财异常时不再无限等待，
+# 到点后新请求直接放弃，已返回的部分数据照常写盘，避免拖垮整个 workflow。
+PHASE_DEADLINE = 0.0
+
+
+def _deadline_hit():
+    return PHASE_DEADLINE > 0 and time.time() > PHASE_DEADLINE
 
 
 def fetch(url, referer="https://quote.eastmoney.com/", timeout=15, retry=3):
@@ -137,11 +146,32 @@ def d10(v):
 def fetch_stock_bars(code, days=250):
     """正股近 days 个自然日的日K（前复权，东财优先/腾讯兜底）。返回 bars 或 []。
     注意 end 必须用真实日期：腾讯接口拒绝未来日期（2050 会 501）。
-    网络偶发失败时重试最多 3 次。"""
+    网络偶发失败时重试最多 3 次；整体受 PHASE_DEADLINE 时限约束。"""
+    if _deadline_hit():
+        return []
+    # 优先复用每日更新已写入的本地前复权K线（data/kline/<code>.json），
+    # 只有本地缺失/过旧才走网络，减少东财请求量。
+    try:
+        kp = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "kline", code + ".json")
+        with open(kp, encoding="utf-8") as f:
+            loc = (json.load(f).get("bars") or [])
+        if loc:
+            last_d = loc[-1].get("d") or ""
+            if last_d:
+                gap = (datetime.date.today()
+                       - datetime.date.fromisoformat(last_d)).days
+                if gap <= 10:
+                    return loc
+    except Exception:  # noqa: BLE001
+        pass
     today = datetime.date.today()
     beg = (today - datetime.timedelta(days=days)).strftime("%Y%m%d")
     end = today.strftime("%Y%m%d")
     for _ in range(3):
+        if _deadline_hit():
+            return []
         try:
             _, bars = sm.fetch_kline(code, beg=beg, end=end)
             if bars:
@@ -154,13 +184,17 @@ def fetch_stock_bars(code, days=250):
 def fetch_review_date(stock_code):
     """正股最近公告里匹配「可转换…审核通过」（上市委过会）公告日期。
     返回 'YYYY-MM-DD' 或 None。"""
+    if _deadline_hit():
+        return None
     for page in (1, 2):
+        if _deadline_hit():
+            return None
         url = ANN_URL + "?" + urllib.parse.urlencode({
             "sr": "-1", "page_size": 100, "page_index": page,
             "ann_type": "A", "client_source": "web",
             "stock_list": stock_code,
         })
-        txt = fetch(url, referer="https://data.eastmoney.com/", timeout=15)
+        txt = fetch(url, referer="https://data.eastmoney.com/", timeout=10, retry=2)
         if not txt:
             return None
         try:
@@ -274,11 +308,13 @@ def build():
 
     # —— 正股行情与过会日期（近5/10日涨跌幅、过会至今涨跌幅）——
     from concurrent.futures import ThreadPoolExecutor
+    global PHASE_DEADLINE
+    PHASE_DEADLINE = time.time() + 480  # 正股行情+过会日期最多给 8 分钟
     all_items = listed + pending
     stocks_needed = sorted({it.get("stock_code") for it in all_items if it.get("stock_code")})
     print("抓正股行情 %d 只..." % len(stocks_needed), flush=True)
     bars_map = {}
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=16) as ex:
         for code, bars in zip(stocks_needed, ex.map(fetch_stock_bars, stocks_needed)):
             bars_map[code] = bars
     # 过会日期：未上市 + 上市 180 天内（老转债公告太远，不再追溯）
@@ -290,9 +326,9 @@ def build():
                 need_review.add(it["stock_code"])
     print("查过会日期 %d 只..." % len(need_review), flush=True)
     review_map = {}
-    if need_review:
+    if need_review and not _deadline_hit():
         sl = sorted(need_review)
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=16) as ex:
             for code, rd in zip(sl, ex.map(fetch_review_date, sl)):
                 review_map[code] = rd
     for it in all_items:

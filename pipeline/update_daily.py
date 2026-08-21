@@ -456,7 +456,7 @@ def main():
     print("5/5 抓取公司基本面（待更新 %d/%d，缓存 %d 天）..." %
           (len(todo_company), len(codes), cache_days), flush=True)
     done_c = [0]
-    cw = max(1, min(cfg.get("company_workers", 6), 8))
+    cw = max(1, min(cfg.get("company_workers", 6), 16))
 
     def _fetch_one(code):
         try:
@@ -483,8 +483,9 @@ def main():
         print("   公司基本面均最新，跳过", flush=True)
 
     # 收集需补「不复权」除权日开盘价的分红记录：
-    #   1) 送转年度（配送股折算现金分红用）；
-    #   2) 除权日在未复权K线覆盖范围之外（2020年前）且 ex_open 缺失的年度。
+    #   仅当 ex_open 缺失且未复权K线未覆盖该除权日时才单独抓取。
+    #   （送转年度折算优先用未复权K线当天开盘价，K线已覆盖则无需单独请求；
+    #    已补过的年度 ex_open 非空，直接跳过，避免每天重复抓 2000+ 条。）
     raw_opens = {}
     need = []
     rk_dates = {}
@@ -503,9 +504,8 @@ def main():
             exd = y.get("ex_date")
             if not exd:
                 continue
-            if ((y.get("send_ratio") or 0) or (y.get("trans_ratio") or 0)) or (
-                y.get("ex_open") is None and exd not in rk_dates.get(code, set())
-            ):
+            if (y.get("ex_open") is None
+                    and exd not in rk_dates.get(code, set())):
                 need.append((code, exd))
     need = sorted(set(need))
     if need:

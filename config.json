@@ -31,9 +31,9 @@
   "min_yield_pct": 1.0,
   "kline_start": "20200101",
   "history_keep": 1400,
-  "workers": 8,
+  "workers": 16,
   "company_cache_days": 30,
-  "company_workers": 6,
+  "company_workers": 16,
   "finance_start_year": 2016,
   "fund_index_map": [
     [
