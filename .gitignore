@@ -4,6 +4,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.log
+*.bak.json
 推送*.ps1
 _r.json
 _s.html
