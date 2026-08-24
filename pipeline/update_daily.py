@@ -93,13 +93,19 @@ def _boll_lower(bars, n=20, k=2.0):
     return out
 
 
-def _streak_below_boll(bars, n=5, period=20, k=2.0):
-    """连续 n 个交易日收盘价低于布林带下轨。数据不足返回 False。"""
-    if not bars or len(bars) < period + n - 1:
-        return False
+def _boll_below_days(bars, period=20, k=2.0):
+    """从最新一根K线向前数，连续收盘价跌破布林带下轨（20日 ± 2σ）的天数。
+    当日未跌破返回 0；数据不足 20 根返回 0。"""
+    if not bars or len(bars) < period:
+        return 0
     lowers = _boll_lower(bars, period, k)
-    return all(lowers[i] is not None and bars[i]["c"] < lowers[i]
-               for i in range(len(bars) - n, len(bars)))
+    days = 0
+    for i in range(len(bars) - 1, -1, -1):
+        lo = lowers[i]
+        if lo is None or bars[i]["c"] >= lo:
+            break
+        days += 1
+    return days
 
 
 def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=None):
@@ -127,8 +133,8 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         it["down7"] = _streak_down(bars, 7)
         it["yin7"] = _streak_yin(bars, 7)
         it["yang7"] = _streak_yang(bars, 7)
-        # 连续5天跌破布林带下轨（20日 ± 2σ）
-        it["boll5"] = _streak_below_boll(bars, 5)
+        # 连续跌破布林带下轨天数（20日 ± 2σ，首页排名框用）
+        it["boll_days"] = _boll_below_days(bars)
 
         comp = None
         cp = os.path.join(company_dir, code + ".json")
@@ -262,7 +268,9 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         it["pb5"] = round(sum(pb_list) / len(pb_list), 2) if pb_list else None
         it["div_yield_5y"] = round(sum(dy_list) / len(dy_list), 2) if dy_list else None
 
-        # 连续2年股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；年度股息率=每股分红/不复权年末收盘价）
+        # 连续2年及以上股息率 < 1% 判定（最近两个完整年度：当年-1、当年-2；
+        # 年度股息率=每股现金分红/不复权年末收盘价；两年均<1%即视为连续2年以上，
+        # 某年缺收盘价则视为不满足）
         dy_vals = []
         for yr in (today.year - 1, today.year - 2):
             c = year_close_raw.get(str(yr))

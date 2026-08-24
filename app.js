@@ -77,7 +77,7 @@ function toBJ(s) {
     " " + p(d.getUTCHours()) + ":" + p(d.getUTCMinutes());
 }
 
-// 过滤规则：删除 PE>150 或 PE<0 的股票；删除股息率连续2年<1%的股票（null/缺失保留）
+// 过滤规则：删除 PE>150 或 PE<0 的股票；删除股息率连续2年及以上<1%的股票（null/缺失保留）
 const stockOK = (s) =>
   (s.pe == null || (s.pe <= 150 && s.pe >= 0)) && !s.dy_bad2;
 
@@ -1275,16 +1275,17 @@ function renderRankings() {
   const cons = all.filter((s) => (s.div_years || 0) >= 5);
   const up = cons.filter((s) => s.pct_1m != null).sort((a, b) => b.pct_1m - a.pct_1m).slice(0, 10);
   const down = cons.filter((s) => s.pct_1m != null).sort((a, b) => a.pct_1m - b.pct_1m).slice(0, 10);
-  // 连跌7天 / 连续7天阴线 / 连续5天跌破布林下轨（按近7日涨跌幅升序，跌幅大的排前面）
+  // 连跌7天 / 连续7天阴线 / 连续7天阳线（按近7日涨跌幅升序，跌幅大的排前面）
   const down7 = all.filter((s) => s.down7 && s.pct_7d != null)
     .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
   const yin7 = all.filter((s) => s.yin7 && s.pct_7d != null)
     .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
   const yang7 = all.filter((s) => s.yang7 && s.pct_7d != null)
     .sort((a, b) => b.pct_7d - a.pct_7d).slice(0, 10);
-  const boll5 = all.filter((s) => s.boll5 && s.pct_7d != null)
-    .sort((a, b) => a.pct_7d - b.pct_7d).slice(0, 10);
-  const block = (title, rows, key, emptyText) => {
+  // 连续跌破布林下轨（≥3天，右侧显示连续跌破天数，多的在前）
+  const boll3 = all.filter((s) => (s.boll_days || 0) >= 3)
+    .sort((a, b) => (b.boll_days || 0) - (a.boll_days || 0)).slice(0, 10);
+  const block = (title, rows, key, emptyText, plain) => {
     if (!rows.length) {
       if (!emptyText) return "";
       return `<div class="rank-block"><div class="rank-title">${title}</div>` +
@@ -1292,8 +1293,8 @@ function renderRankings() {
     }
     const items = rows.map((s, i) => {
       const v = s[key];
-      const cls = v > 0 ? "red" : v < 0 ? "green" : "";
-      const txt = (v > 0 ? "+" : "") + fmt(v);
+      const cls = plain ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+      const txt = plain ? fmt(v, 0) : (v > 0 ? "+" : "") + fmt(v);
       return `<li><span class="rk">${i + 1}</span>` +
         `<span class="rc" data-code="${s.code}">${esc(s.name)}(${s.code})</span>` +
         `<span class="rv num ${cls}">${txt}</span></li>`;
@@ -1306,7 +1307,7 @@ function renderRankings() {
     block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +
     block("连续7天阴线", yin7, "pct_7d", "今日暂无满足条件的股票") +
     block("连续7天阳线", yang7, "pct_7d", "今日暂无满足条件的股票") +
-    block("连续5天跌破布林下轨", boll5, "pct_7d", "今日暂无满足条件的股票");
+    block("连续3天跌破布林下轨", boll3, "boll_days", "今日暂无满足条件的股票", true);
   box.querySelectorAll(".rc").forEach((el) =>
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
 }
