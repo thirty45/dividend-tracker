@@ -1327,15 +1327,25 @@ function renderInsiderRank() {
   if (state.insiderPage < 1) state.insiderPage = 1;
   const page = state.insiderPage;
   const shown = list.slice((page - 1) * per, page * per);
+  const smap = new Map((state.stocks || []).map((s) => [s.code, s]));
   tbody.innerHTML = shown.map((x) => {
     const sh = x.shares == null ? "—" : Math.round(x.shares).toLocaleString();
     const rt = x.ratio == null ? "—" : fmt(x.ratio, 2);
+    const st = smap.get(x.code) || {};
+    const dy = st.dy == null ? "—" : fmt(st.dy, 2);
+    const dy5 = st.div_yield_5y == null ? "—" : fmt(st.div_yield_5y, 2);
+    const pe = st.pe == null ? "—" : fmt(st.pe);
+    const pb = st.pb == null ? "—" : fmt(st.pb);
     return `<tr data-code="${x.code}">
       <td>${x.date || "—"}</td>
       <td>${esc(x.name || "—")}(${x.code})</td>
       <td>${esc(x.position || "—")}</td>
       <td class="num">${sh}</td>
       <td class="num">${rt}</td>
+      <td class="num">${dy}</td>
+      <td class="num">${dy5}</td>
+      <td class="num">${pe}</td>
+      <td class="num">${pb}</td>
       <td>${esc(x.reason || "—")}</td></tr>`;
   }).join("");
   const info = $("#insider-info");
