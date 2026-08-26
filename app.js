@@ -20,6 +20,7 @@ const state = {
   hkPeriod: "day", hkMode: "raw",
   hkFinGran: "annual", hkFinChart: null, hkFinKey: null,
   hkCurrent: null, hkCompany: null,
+  social: { items: [] }, socialLoaded: false, socialSearch: "",
 };
 
 const fmt = (v, d = 2) =>
@@ -183,7 +184,7 @@ function renderBoards() {
 
 function showView(name) {
   ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
-   "hk", "hk-detail"].forEach((v) => {
+   "hk", "hk-detail", "social"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
@@ -192,6 +193,7 @@ function showView(name) {
   $("#tab-funds").classList.toggle("active", name === "funds" || name === "fund-detail");
   $("#tab-cbonds").classList.toggle("active", name === "cbonds");
   $("#tab-hk").classList.toggle("active", name === "hk" || name === "hk-detail");
+  $("#tab-social").classList.toggle("active", name === "social");
   state.view = name;
   window.scrollTo(0, 0);
 }
@@ -1203,8 +1205,90 @@ function renderHkFinChart(fin) {
   }, true);
 }
 
+// ==================== 社保基金调仓 ====================
+async function loadSocial() {
+  if (state.socialLoaded) return;
+  state.socialLoaded = true;
+  try {
+    const d = await fetch("data/meta/social_security.json").then((r) => r.json());
+    state.social = d || { items: [] };
+    const meta = $("#meta");
+    if (meta && d && d.total) {
+      meta.textContent += " · 社保调仓 " +
+        (d.total.inc || 0) + "增/" + (d.total.dec || 0) + "减";
+    }
+  } catch (e) {
+    console.error("社保基金数据加载失败:", e);
+  }
+}
+
+function socialFiltered(dir) {
+  let list = (state.social.items || []).filter((x) => x.direction === dir);
+  const q = state.socialSearch.trim().toLowerCase();
+  if (q) {
+    list = list.filter(
+      (x) =>
+        x.code.includes(q) ||
+        (x.name || "").toLowerCase().includes(q) ||
+        (x.holder || "").toLowerCase().includes(q) ||
+        initials(x.name || "").includes(q)
+    );
+  }
+  return list;
+}
+
+function socialRowHTML(x) {
+  const hold = x.hold_num == null ? "—" : fmt(x.hold_num / 1e4, 1);
+  const ratio = x.hold_ratio == null ? "—" : fmt(x.hold_ratio, 2);
+  const cn = x.change_num;
+  const chgCls = cn > 0 ? "red" : cn < 0 ? "green" : "";
+  const chgTxt = cn == null ? "—" :
+    (cn > 0 ? "+" : "") + fmt(cn / 1e4, 1);
+  const cr = x.change_ratio;
+  const crTxt = cr == null ? "—" : (cr > 0 ? "+" : "") + fmt(cr, 2);
+  return `<tr data-code="${x.code}">
+    <td>${x.end_date || "—"}</td>
+    <td>${esc(x.name || "—")}(${x.code})</td>
+    <td>${esc(x.holder || "—")}</td>
+    <td class="num">${hold}</td>
+    <td class="num">${ratio}</td>
+    <td class="num ${chgCls}">${chgTxt}</td>
+    <td class="num ${cr > 0 ? "red" : cr < 0 ? "green" : ""}">${crTxt}</td></tr>`;
+}
+
+function renderSocial() {
+  const inc = socialFiltered("增持")
+    .sort((a, b) => (b.change_num || 0) - (a.change_num || 0));
+  const dec = socialFiltered("减持")
+    .sort((a, b) => (a.change_num || 0) - (b.change_num || 0));
+  const t1 = $("#social-inc-table tbody");
+  const t2 = $("#social-dec-table tbody");
+  if (t1) t1.innerHTML = inc.map(socialRowHTML).join("");
+  if (t2) t2.innerHTML = dec.map(socialRowHTML).join("");
+  const info = $("#social-info");
+  if (info) {
+    const parts = [`报告期 ${state.social.report_date || "—"}`];
+    if (state.socialSearch.trim()) parts.push("搜索：" + state.socialSearch.trim());
+    parts.push(`增持 ${inc.length} 条 · 减持 ${dec.length} 条`);
+    info.textContent = parts.join(" · ");
+  }
+  [t1, t2].forEach((tb) => {
+    if (!tb) return;
+    tb.querySelectorAll("tr").forEach((tr) =>
+      tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
+    );
+  });
+}
+
 function route() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/social")) {
+    loadSocial().then(() => {
+      renderSocial();
+      showView("social");
+    });
+    return;
+  }
   if (h.startsWith("#/hk/")) {
     loadHk().then(() => openHkDetail(decodeURIComponent(h.slice(5))));
     return;
@@ -1596,6 +1680,9 @@ function setupEvents() {
     } else if (state.view === "hk" || state.view === "hk-detail") {
       state.hkSearch = q;
       renderHkList();
+    } else if (state.view === "social") {
+      state.socialSearch = q;
+      renderSocial();
     } else {
       state.search = q;
       renderList();
@@ -1614,6 +1701,7 @@ function setupEvents() {
   $("#tab-funds").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#tab-cbonds").addEventListener("click", () => { location.hash = "#/cbonds"; });
   $("#tab-hk").addEventListener("click", () => { location.hash = "#/hk"; });
+  $("#tab-social").addEventListener("click", () => { location.hash = "#/social"; });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
   $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#hk-back").addEventListener("click", () => { location.hash = "#/hk"; });

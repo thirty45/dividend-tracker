@@ -24,6 +24,7 @@
         <button id="tab-funds">红利/宽基基金</button>
         <button id="tab-cbonds">可转债</button>
         <button id="tab-hk">港股通</button>
+        <button id="tab-social">社保基金</button>
       </nav>
     </div>
   </header>
@@ -255,6 +256,36 @@
         <button id="hk-fin-chart-toggle" class="mini-btn">展示指标图</button>
         <div id="hk-fin-chart" hidden></div>
       </div>
+    </section>
+
+    <section id="view-social" hidden>
+      <div class="rank-title">社保基金调仓 · 增持（按变动数量降序）</div>
+      <div class="table-wrap">
+        <table id="social-inc-table">
+          <thead>
+            <tr>
+              <th>报告期</th><th>名称(代码)</th><th>社保组合</th>
+              <th class="num">本期持股(万股)</th><th class="num">持股比例%</th>
+              <th class="num">变动数量(万股)</th><th class="num">变动比例%</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="rank-title">社保基金调仓 · 减持（按变动数量升序）</div>
+      <div class="table-wrap">
+        <table id="social-dec-table">
+          <thead>
+            <tr>
+              <th>报告期</th><th>名称(代码)</th><th>社保组合</th>
+              <th class="num">本期持股(万股)</th><th class="num">持股比例%</th>
+              <th class="num">变动数量(万股)</th><th class="num">变动比例%</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="social-info" class="muted"></div>
     </section>
 
     <section id="view-detail" hidden>
