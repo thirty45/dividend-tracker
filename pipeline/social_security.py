@@ -45,6 +45,15 @@ def _num(v):
         return None
 
 
+def _nature(holder):
+    """社保组合性质：全国社保基金理事会直管 vs 委托外部管理人。"""
+    if not holder:
+        return ""
+    if holder.startswith(("全国社保", "全国社会保障")):
+        return "直管"
+    return "委外"
+
+
 def fetch_social_one(code, name):
     """抓单只股票的社保组合持仓变动，返回记录列表（无则空列表）。"""
     out = []
@@ -91,6 +100,7 @@ def fetch_social_one(code, name):
                 "code": code,
                 "name": name,
                 "holder": holder,
+                "nature": _nature(holder),
                 "end_date": end,
                 "hold_num": hold_num,
                 "hold_ratio": (_num(r.get("HOLD_NUM_RATIO"))

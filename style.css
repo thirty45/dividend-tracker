@@ -46,6 +46,7 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: #f0f4ff; }
 .fin-table tbody tr.sel td { background: #e8f0fe; font-weight: 600; }
 .sort-mark { font-size: 10px; color: #1e5eff; }
+.nature { color: #888; font-size: 11px; cursor: help; }
 tbody tr:last-child td { border-bottom: none; }
 /* 列表/基金/转债表首列（名称(代码)）固定：横向滚动查看其他指标时保持可见 */
 #stock-table td:first-child, #tag-table td:first-child, #fund-table td:first-child,
