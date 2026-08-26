@@ -1238,6 +1238,10 @@ function socialFiltered(dir) {
 }
 
 function socialRowHTML(x) {
+  const st = (state.socialStockMap && state.socialStockMap.get(x.code)) || {};
+  const badges = [];
+  if (st.ins_up) badges.push('<span class="bdg bdg-up" title="近1年高管增持">增</span>');
+  if (st.ins_down) badges.push('<span class="bdg bdg-down" title="近1年高管减持">减</span>');
   const hold = x.hold_num == null ? "—" : fmt(x.hold_num / 1e4, 1);
   const ratio = x.hold_ratio == null ? "—" : fmt(x.hold_ratio, 2);
   const cn = x.change_num;
@@ -1248,15 +1252,19 @@ function socialRowHTML(x) {
   const crTxt = cr == null ? "—" : (cr > 0 ? "+" : "") + fmt(cr, 2);
   return `<tr data-code="${x.code}">
     <td>${x.end_date || "—"}</td>
-    <td>${esc(x.name || "—")}(${x.code})</td>
+    <td>${esc(x.name || "—")}(${x.code})${badges.join("")}</td>
     <td>${esc(x.holder || "—")}</td>
     <td class="num">${hold}</td>
     <td class="num">${ratio}</td>
     <td class="num ${chgCls}">${chgTxt}</td>
-    <td class="num ${cr > 0 ? "red" : cr < 0 ? "green" : ""}">${crTxt}</td></tr>`;
+    <td class="num ${cr > 0 ? "red" : cr < 0 ? "green" : ""}">${crTxt}</td>
+    <td class="num">${st.dy == null ? "—" : fmt(st.dy, 2)}</td>
+    <td class="num">${st.pe == null ? "—" : fmt(st.pe)}</td>
+    <td class="num">${st.pb == null ? "—" : fmt(st.pb)}</td></tr>`;
 }
 
 function renderSocial() {
+  state.socialStockMap = new Map((state.stocks || []).map((s) => [s.code, s]));
   const inc = socialFiltered("增持")
     .sort((a, b) => (b.change_num || 0) - (a.change_num || 0));
   const dec = socialFiltered("减持")
