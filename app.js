@@ -1244,10 +1244,16 @@ function socialRowHTML(x) {
   const badges = [];
   if (st.ins_up) badges.push('<span class="bdg bdg-up" title="近1年高管增持">增</span>');
   if (st.ins_down) badges.push('<span class="bdg bdg-down" title="近1年高管减持">减</span>');
-  const holderTip = x.nature === "直管" ? "全国社保基金理事会直管" :
-    x.nature === "委外" ? "委托外部基金/券商管理" : "";
+  const combo = x.combo_type
+    ? x.combo_type + (x.manager ? "·" + x.manager : "")
+    : "";
+  const comboTitle = x.combo_type
+    ? "投资方向：" + x.combo_type +
+      (x.manager ? "；受托管理人：" + x.manager : "") +
+      (x.nature ? "；" + x.nature : "")
+    : "";
   const holderTxt = esc(x.holder || "—") +
-    (x.nature ? `<span class="nature" title="${holderTip}">(${x.nature})</span>` : "");
+    (combo ? ` <span class="nature" title="${comboTitle}">(${combo})</span>` : "");
   const hold = x.hold_num == null ? "—" : fmt(x.hold_num / 1e4, 1);
   const ratio = x.hold_ratio == null ? "—" : fmt(x.hold_ratio, 2);
   const cn = x.change_num;

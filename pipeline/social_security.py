@@ -18,6 +18,7 @@
 import datetime
 import json
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -30,6 +31,20 @@ EMWEB = ("https://emweb.securities.eastmoney.com/PC_HSF10/"
          "ShareholderResearch/PageAjax?code=%s%s")
 CACHE_PATH = os.path.join(BASE, "data", "meta", "social_security.json")
 CACHE_DAYS = 7
+
+# 社保组合编号解码：首位=投资方向，后两位（或后几位）=管理人代号
+MANAGER_MAP = {
+    "01": "南方", "02": "博时", "03": "华夏", "04": "鹏华", "05": "长盛",
+    "06": "嘉实", "09": "易方达", "10": "招商", "11": "国泰", "12": "中金",
+    "13": "大成", "14": "广发", "15": "海富通", "16": "汇添富",
+}
+COMBO_TYPES = {
+    "0": "理事会直管", "1": "股票型", "2": "债券型", "3": "债券回购",
+    "4": "转股票型", "5": "股票型(二批)", "6": "稳健配置",
+    "7": "股票型(新批)", "8": "债券型(二批)", "9": "债券型(二批)",
+}
+CN_DIGITS = {"零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
+             "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
 
 
 def _market(code):
@@ -46,12 +61,50 @@ def _num(v):
 
 
 def _nature(holder):
-    """社保组合性质：全国社保基金理事会直管 vs 委托外部管理人。"""
-    if not holder:
-        return ""
-    if holder.startswith(("全国社保", "全国社会保障")):
+    """社保组合性质：编号首位 0=理事会直管，其余=委托外部管理人。"""
+    digits = _combo_digits(holder)
+    if digits:
+        return "直管" if digits[0] == "0" else "委外"
+    if (holder or "").startswith(("全国社保", "全国社会保障")):
         return "直管"
     return "委外"
+
+
+def _combo_digits(holder):
+    """提取组合编号数字：优先阿拉伯数字，其次中文数字转阿拉伯。"""
+    m = re.search(r"(\d+)", holder or "")
+    if m:
+        return m.group(1)
+    s = "".join(CN_DIGITS.get(c, "") for c in (holder or ""))
+    return s or None
+
+
+def _manager_from_name(holder):
+    """委外组合：管理人取"-"前的机构简称。"""
+    left = (holder or "").split("-")[0] if "-" in (holder or "") else ""
+    for suf, rep in (
+        ("基金管理股份有限公司", ""), ("基金管理有限公司", ""),
+        ("基金有限公司", ""), ("证券股份有限公司", "证券"),
+        ("证券有限公司", "证券"), ("股份有限公司", ""),
+        ("有限公司", ""), ("基金", ""),
+    ):
+        left = left.replace(suf, rep)
+    return left
+
+
+def _decode_combo(holder):
+    """返回 (投资方向标签, 管理人)。依据编号首位与后两位管理人代号。"""
+    digits = _combo_digits(holder)
+    if not digits:
+        return "", ""
+    typ = COMBO_TYPES.get(digits[0], "")
+    mgr = ""
+    if "-" in (holder or ""):
+        mgr = _manager_from_name(holder)
+    elif digits[0] != "0":
+        mgr = (MANAGER_MAP.get(digits[-2:], "")
+               or MANAGER_MAP.get(digits[-1:], ""))
+    return typ, mgr
 
 
 def fetch_social_one(code, name):
@@ -96,11 +149,14 @@ def fetch_social_one(code, name):
                              else "减持" if change_num < 0 else None)
             if direction is None:
                 continue
+            ct, mgr = _decode_combo(holder)
             out.append({
                 "code": code,
                 "name": name,
                 "holder": holder,
                 "nature": _nature(holder),
+                "combo_type": ct,
+                "manager": mgr,
                 "end_date": end,
                 "hold_num": hold_num,
                 "hold_ratio": (_num(r.get("HOLD_NUM_RATIO"))
