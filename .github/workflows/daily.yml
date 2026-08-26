@@ -70,6 +70,11 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
 
+      - name: 构建国资红利数据
+        run: python pipeline/soe.py
+        env:
+          PYTHONUNBUFFERED: '1'
+
       - name: 保存K线缓存
         if: always()
         continue-on-error: true

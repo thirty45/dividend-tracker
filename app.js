@@ -23,6 +23,7 @@ const state = {
   social: { items: [] }, socialLoaded: false, socialSearch: "",
   socialSort: { inc: { k: "change_num", asc: false },
                 dec: { k: "change_num", asc: true } },
+  soe: { items: [] }, soeLoaded: false, soeCat: "all", soeSearch: "",
 };
 
 const fmt = (v, d = 2) =>
@@ -186,7 +187,7 @@ function renderBoards() {
 
 function showView(name) {
   ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
-   "hk", "hk-detail", "social"].forEach((v) => {
+   "hk", "hk-detail", "social", "soe"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
@@ -196,6 +197,7 @@ function showView(name) {
   $("#tab-cbonds").classList.toggle("active", name === "cbonds");
   $("#tab-hk").classList.toggle("active", name === "hk" || name === "hk-detail");
   $("#tab-social").classList.toggle("active", name === "social");
+  $("#tab-soe").classList.toggle("active", name === "soe");
   state.view = name;
   window.scrollTo(0, 0);
 }
@@ -1343,8 +1345,91 @@ function renderSocial() {
   updateSocialSortIndicators();
 }
 
+// ==================== 国资红利（央企/地方国企/政府部门） ====================
+async function loadSoe() {
+  if (state.soeLoaded) return;
+  state.soeLoaded = true;
+  try {
+    const d = await fetch("data/meta/soe.json").then((r) => r.json());
+    state.soe = d || { items: [] };
+    const meta = $("#meta");
+    if (meta && d && d.total) {
+      meta.textContent += " · 国资红利 " +
+        ((d.total["央企"] || 0) + (d.total["地方国企"] || 0) +
+         (d.total["政府部门"] || 0)) + " 只";
+    }
+  } catch (e) {
+    console.error("国资红利数据加载失败:", e);
+  }
+}
+
+function soeFiltered() {
+  let list = state.soe.items || [];
+  if (state.soeCat !== "all") {
+    list = list.filter((x) => x.category === state.soeCat);
+  }
+  const q = state.soeSearch.trim().toLowerCase();
+  if (q) {
+    list = list.filter(
+      (x) =>
+        x.code.includes(q) ||
+        (x.name || "").toLowerCase().includes(q) ||
+        (x.controller || "").toLowerCase().includes(q) ||
+        initials(x.name || "").includes(q)
+    );
+  }
+  return list;
+}
+
+function soeRowHTML(x) {
+  const st = (state.soeStockMap && state.soeStockMap.get(x.code)) || {};
+  return `<tr data-code="${x.code}">
+    <td>${esc(x.category || "—")}</td>
+    <td>${esc(x.name || "—")}(${x.code})</td>
+    <td>${esc(x.controller || "—")}</td>
+    <td class="num">${st.dy == null ? "—" : fmt(st.dy, 2)}</td>
+    <td class="num">${st.pe == null ? "—" : fmt(st.pe)}</td>
+    <td class="num">${st.pb == null ? "—" : fmt(st.pb)}</td>
+    <td class="num">${st.roe == null ? "—" : fmt(st.roe, 2)}</td>
+    <td class="num">${st.mv == null ? "—" : fmt(st.mv, 1)}</td>
+    <td>${st.industry || "—"}</td></tr>`;
+}
+
+function renderSoe() {
+  state.soeStockMap = new Map((state.stocks || []).map((s) => [s.code, s]));
+  const list = soeFiltered().sort((a, b) =>
+    a.category === b.category
+      ? ((state.soeStockMap.get(b.code) || {}).dy || 0) -
+        ((state.soeStockMap.get(a.code) || {}).dy || 0)
+      : a.category.localeCompare(b.category));
+  const tb = $("#soe-table tbody");
+  if (tb) tb.innerHTML = list.map(soeRowHTML).join("");
+  const info = $("#soe-info");
+  if (info) {
+    const parts = [];
+    if (state.soeCat !== "all") parts.push("类别：" + state.soeCat);
+    if (state.soeSearch.trim()) parts.push("搜索：" + state.soeSearch.trim());
+    const t = state.soe.total || {};
+    parts.push(`央企 ${t["央企"] || 0} · 地方国企 ${t["地方国企"] || 0} · 政府部门 ${t["政府部门"] || 0}`);
+    parts.push(`显示 ${list.length} 只`);
+    info.textContent = parts.join(" · ");
+  }
+  if (tb) {
+    tb.querySelectorAll("tr").forEach((tr) =>
+      tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
+    );
+  }
+}
+
 function route() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/soe")) {
+    loadSoe().then(() => {
+      renderSoe();
+      showView("soe");
+    });
+    return;
+  }
   if (h.startsWith("#/social")) {
     loadSocial().then(() => {
       renderSocial();
@@ -1746,6 +1831,9 @@ function setupEvents() {
     } else if (state.view === "social") {
       state.socialSearch = q;
       renderSocial();
+    } else if (state.view === "soe") {
+      state.soeSearch = q;
+      renderSoe();
     } else {
       state.search = q;
       renderList();
@@ -1765,6 +1853,7 @@ function setupEvents() {
   $("#tab-cbonds").addEventListener("click", () => { location.hash = "#/cbonds"; });
   $("#tab-hk").addEventListener("click", () => { location.hash = "#/hk"; });
   $("#tab-social").addEventListener("click", () => { location.hash = "#/social"; });
+  $("#tab-soe").addEventListener("click", () => { location.hash = "#/soe"; });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
   $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#hk-back").addEventListener("click", () => { location.hash = "#/hk"; });
@@ -1840,6 +1929,14 @@ function setupEvents() {
       b.classList.add("active");
       state.finGran = b.dataset.g;
       if (state.company) renderFinance(state.company.finance || {});
+    })
+  );
+  document.querySelectorAll("#soe-filter button").forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#soe-filter button").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      state.soeCat = b.dataset.c;
+      renderSoe();
     })
   );
   document.querySelectorAll("#hk-fin-gran button").forEach((b) =>
