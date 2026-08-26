@@ -1479,6 +1479,7 @@ function route() {
   renderList();
   try { renderRankings(); } catch (e) { /* 单个榜单异常不影响页面 */ }
   try { renderInsiderRank(); } catch (e) { /* 单个榜单异常不影响页面 */ }
+  try { renderHomeCbonds(); } catch (e) { /* 可转债公告表异常不影响页面 */ }
   showView("list");
 }
 
@@ -1593,6 +1594,47 @@ function renderInsiderRank() {
   }
   tbody.querySelectorAll("tr").forEach((tr) =>
     tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
+  );
+}
+
+// 首页：当日新公布的拟上市申购可转债（公告日 = 数据日期）
+function cbHomeRowHTML(b) {
+  const prCls = b.premium_rt == null ? "" : b.premium_rt > 0 ? "red" : b.premium_rt < 0 ? "green" : "";
+  const pr = b.premium_rt == null ? "—" : (b.premium_rt > 0 ? "+" : "") + fmt(b.premium_rt) + "%";
+  const pct = (v) => v == null ? "—" : (v > 0 ? "+" : "") + fmt(v) + "%";
+  const pctCls = (v) => v == null ? "" : v > 0 ? "red" : v < 0 ? "green" : "";
+  const stock = b.stock_name ? `${esc(b.stock_name)}(${esc(b.stock_code)})` : "—";
+  return `<tr>
+    <td>${esc(b.name || "—")}(${b.code})</td>
+    <td>${b.apply_date || "—"}</td>
+    <td>${b.record_date || "—"}</td>
+    <td>${stock}</td>
+    <td class="num">${b.convert_price == null ? "—" : fmt(b.convert_price, 3)}</td>
+    <td class="num">${b.convert_value == null ? "—" : fmt(b.convert_value)}</td>
+    <td class="num ${prCls}">${pr}</td>
+    <td class="num">${b.ration == null ? "—" : fmt(b.ration, 4)}</td>
+    <td class="num">${b.amt1 == null ? "—" : Number(b.amt1).toLocaleString()}</td>
+    <td class="num">${b.amt2 == null ? "—" : Number(b.amt2).toLocaleString()}</td>
+    <td class="num ${pctCls(b.pct5)}">${pct(b.pct5)}</td>
+    <td class="num ${pctCls(b.pct10)}">${pct(b.pct10)}</td></tr>`;
+}
+
+function renderHomeCbonds() {
+  const box = $("#cb-announce");
+  if (!box) return;
+  const c = state.cbonds || { listed: [], pending: [], date: "" };
+  const today = c.date || "";
+  const list = (c.pending || []).filter((b) => b.record_date === today);
+  const table = $("#cb-announce-table");
+  const empty = $("#cb-announce-empty");
+  const tbody = table ? table.querySelector("tbody") : null;
+  box.hidden = false;
+  if (table) table.hidden = !list.length;
+  if (empty) empty.textContent = list.length ? "" : "今日暂无新公布申购的可转债";
+  if (!tbody) return;
+  tbody.innerHTML = list.map(cbHomeRowHTML).join("");
+  tbody.querySelectorAll("tr").forEach((tr) =>
+    tr.addEventListener("click", () => { location.hash = "#/cbonds"; })
   );
 }
 
