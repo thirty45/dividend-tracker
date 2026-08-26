@@ -21,6 +21,8 @@ const state = {
   hkFinGran: "annual", hkFinChart: null, hkFinKey: null,
   hkCurrent: null, hkCompany: null,
   social: { items: [] }, socialLoaded: false, socialSearch: "",
+  socialSort: { inc: { k: "change_num", asc: false },
+                dec: { k: "change_num", asc: true } },
 };
 
 const fmt = (v, d = 2) =>
@@ -1263,12 +1265,54 @@ function socialRowHTML(x) {
     <td class="num">${st.pb == null ? "—" : fmt(st.pb)}</td></tr>`;
 }
 
+function socialVal(x, k) {
+  if (k === "dy" || k === "pe" || k === "pb") {
+    const st = (state.socialStockMap && state.socialStockMap.get(x.code)) || {};
+    return st[k] == null ? null : st[k];
+  }
+  const v = x[k];
+  return v === undefined ? null : v;
+}
+
+function sortSocial(list, cfg) {
+  const k = cfg.k;
+  const asc = cfg.asc;
+  return list.slice().sort((a, b) => {
+    const va = socialVal(a, k), vb = socialVal(b, k);
+    const na = va === null || va === "";
+    const nb = vb === null || vb === "";
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    if (typeof va === "string" || typeof vb === "string")
+      return asc ? String(va).localeCompare(String(vb))
+                 : String(vb).localeCompare(String(va));
+    return asc ? va - vb : vb - va;
+  });
+}
+
+function updateSocialSortIndicators() {
+  document.querySelectorAll("#social-inc-table th[data-k], #social-dec-table th[data-k]")
+    .forEach((th) => {
+      const m = th.querySelector(".sort-mark");
+      if (m) m.remove();
+    });
+  [["#social-inc-table", state.socialSort.inc],
+   ["#social-dec-table", state.socialSort.dec]].forEach(([sel, cfg]) => {
+    const th = document.querySelector(sel + ' th[data-k="' + cfg.k + '"]');
+    if (th) {
+      const sp = document.createElement("span");
+      sp.className = "sort-mark";
+      sp.textContent = cfg.asc ? " ▲" : " ▼";
+      th.appendChild(sp);
+    }
+  });
+}
+
 function renderSocial() {
   state.socialStockMap = new Map((state.stocks || []).map((s) => [s.code, s]));
-  const inc = socialFiltered("增持")
-    .sort((a, b) => (b.change_num || 0) - (a.change_num || 0));
-  const dec = socialFiltered("减持")
-    .sort((a, b) => (a.change_num || 0) - (b.change_num || 0));
+  const inc = sortSocial(socialFiltered("增持"), state.socialSort.inc);
+  const dec = sortSocial(socialFiltered("减持"), state.socialSort.dec);
   const t1 = $("#social-inc-table tbody");
   const t2 = $("#social-dec-table tbody");
   if (t1) t1.innerHTML = inc.map(socialRowHTML).join("");
@@ -1286,6 +1330,7 @@ function renderSocial() {
       tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
     );
   });
+  updateSocialSortIndicators();
 }
 
 function route() {
@@ -1722,6 +1767,17 @@ function setupEvents() {
       renderHkList();
     })
   );
+  [["#social-inc-table", "inc"], ["#social-dec-table", "dec"]].forEach(([sel, side]) => {
+    document.querySelectorAll(sel + " th[data-k]").forEach((th) =>
+      th.addEventListener("click", () => {
+        const k = th.dataset.k;
+        const cfg = state.socialSort[side];
+        if (cfg.k === k) cfg.asc = !cfg.asc;
+        else state.socialSort[side] = { k, asc: k === "name" || k === "holder" || k === "end_date" };
+        renderSocial();
+      })
+    );
+  });
   document.querySelectorAll("#fund-table th[data-k]").forEach((th) =>
     th.addEventListener("click", () => {
       const k = th.dataset.k;
