@@ -1,7 +1,7 @@
 {
   "project_name": "红利股票跟踪",
   "fund_min_year": 2020,
-  "fund_workers": 6,
+  "fund_workers": 16,
   "dividend_index_ids": [
     "000922",
     "h30269",

@@ -374,7 +374,7 @@ def build_funds(limit=None, workers=6, data_dir="data", progress=None):
 def main():
     ap = argparse.ArgumentParser(description="构建红利/宽基指数基金列表与指标")
     ap.add_argument("--limit", type=int, default=None, help="仅处理前 N 只（调试）")
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--data-dir", default="data")
     ap.add_argument("--code", default=None, help="仅抓取单只基金代码（调试）")
     args = ap.parse_args()

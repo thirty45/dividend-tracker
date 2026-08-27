@@ -428,15 +428,24 @@ def main():
             raw_klines[c] = raw_bars
             continue
         need_full = args.force or not adj_bars or not raw_bars
+        full_ref = adj_full or raw_full or ""
         if not need_full:
             try:
-                last_full = datetime.date.fromisoformat(adj_full or raw_full or "")
+                last_full = datetime.date.fromisoformat(full_ref)
                 if (datetime.date.today() - last_full).days >= full_interval:
                     need_full = True
             except ValueError:
-                need_full = True
+                # 旧格式缓存没有 full_date：按已有K线末根日期做增量，不误判全量
+                last_d = ((adj_bars[-1]["d"] if adj_bars else "") or
+                          (raw_bars[-1]["d"] if raw_bars else ""))
+                try:
+                    datetime.date.fromisoformat(last_d)
+                    full_ref = last_d
+                except ValueError:
+                    need_full = True
+                    full_ref = today_iso
         todo.append((c, adj_bars or [], raw_bars or [],
-                     need_full, adj_full or raw_full or today_iso))
+                     need_full, full_ref or today_iso))
     n_full = sum(1 for t in todo if t[3])
     print("   待抓取K线 %d 只（全量 %d 只 · 增量 %d 只 · 已最新 %d 只）"
           % (len(todo), n_full, len(todo) - n_full, len(codes) - len(todo)),
@@ -560,12 +569,14 @@ def main():
         print("   公司基本面均最新，跳过", flush=True)
 
     # 收集需补「不复权」除权日开盘价的分红记录：
-    #   仅当 ex_open 缺失且未复权K线未覆盖该除权日时才单独抓取。
-    #   （送转年度折算优先用未复权K线当天开盘价，K线已覆盖则无需单独请求；
-    #    已补过的年度 ex_open 非空，直接跳过，避免每天重复抓 2000+ 条。）
+    #   仅当 ex_open 缺失、未复权K线未覆盖该除权日且未标记抓取失败时才抓取。
+    #   限近8年除权日 + 每轮上限，抓取失败打 ex_open_miss 标记，避免每天重复重试
+    #   （早年数据源无记录，反复重试只会浪费 2 小时）。
     raw_opens = {}
     need = []
     rk_dates = {}
+    ex_cutoff = "%d-01-01" % (datetime.date.today().year - 8)
+    ex_max = cfg.get("ex_open_backfill_max", 1500)
     for code in codes:
         rk_dates[code] = {b["d"] for b in (raw_klines.get(code) or [])}
     for code in codes:
@@ -579,14 +590,16 @@ def main():
             continue
         for y in ((compd.get("dividend", {}) or {}).get("years", []) or []):
             exd = y.get("ex_date")
-            if not exd:
+            if not exd or exd < ex_cutoff:
                 continue
-            if (y.get("ex_open") is None
+            if (y.get("ex_open") is None and not y.get("ex_open_miss")
                     and exd not in rk_dates.get(code, set())):
                 need.append((code, exd))
-    need = sorted(set(need))
+    need = sorted(set(need), key=lambda x: x[1])[-ex_max:]
+    miss = set()
     if need:
-        print("抓不复权除权日开盘价 %d 条（送转分红折算）..." % len(need), flush=True)
+        print("抓不复权除权日开盘价 %d 条（近8年·本轮上限%d）..."
+              % (len(need), ex_max), flush=True)
 
         def _ex_open(item):
             code, exd = item
@@ -599,8 +612,30 @@ def main():
             for code, exd, op in ex.map(_ex_open, need):
                 if op:
                     raw_opens.setdefault(code, {})[exd] = op
+                else:
+                    miss.add((code, exd))
         got = sum(len(v) for v in raw_opens.values())
         print("   成功 %d/%d" % (got, len(need)), flush=True)
+    # 抓取失败打标记，避免下一轮重复重试
+    if miss:
+        by_code = {}
+        for code, exd in miss:
+            by_code.setdefault(code, set()).add(exd)
+        for code, exds in by_code.items():
+            p = os.path.join(company_dir, code + ".json")
+            try:
+                with open(p, encoding="utf-8") as f:
+                    compd = json.load(f)
+            except Exception:  # noqa: BLE001
+                continue
+            changed = False
+            for y in ((compd.get("dividend", {}) or {}).get("years", []) or []):
+                if y.get("ex_date") in exds:
+                    y["ex_open_miss"] = True
+                    changed = True
+            if changed:
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump(compd, f, ensure_ascii=False)
 
     # 组装快照
     # 近1年高管增持/减持（角标用；buy 记录也用于首页“高管增持”排名表）
