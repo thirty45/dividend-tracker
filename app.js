@@ -103,7 +103,8 @@ function filtered() {
     list = list.filter(
       (s) =>
         s.code.includes(q) ||
-        (s.name || "").toLowerCase().includes(q) ||
+        (s.name || "").replace(/\s+/g, "").toLowerCase()
+          .includes(q.replace(/\s+/g, "")) ||
         ((state.pyMap && state.pyMap.get(s.code)) || "").includes(q) ||
         (s.industry || "").toLowerCase().includes(q) ||
         (s.tags || []).some((t) => t.toLowerCase().includes(q))
@@ -2099,6 +2100,28 @@ function setupEvents() {
     } else {
       state.search = q;
       renderList();
+    }
+  });
+  // 回车：精确匹配股票名/代码，直接跳个股详情页
+  $("#search").addEventListener("keydown", async (e) => {
+    if (e.key !== "Enter") return;
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) return;
+    const exact = (list) => (list || []).find(
+      (s) => (s.name || "").replace(/\s+/g, "").toLowerCase() === q
+        || (s.code || "").toLowerCase() === q
+    );
+    const ahit = exact(state.stocks);
+    if (ahit) {
+      e.preventDefault();
+      location.hash = "#/stock/" + ahit.code;
+      return;
+    }
+    await loadHk();
+    const hhit = exact(state.hkStocks);
+    if (hhit) {
+      e.preventDefault();
+      location.hash = "#/hk/" + hhit.code;
     }
   });
   document.querySelectorAll("#stock-table th[data-k]").forEach((th) =>
