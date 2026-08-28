@@ -339,22 +339,41 @@ def fetch_dividend(code, annual_netprofit, netprofit_by_rpt=None):
 
 
 def fetch_executives(code):
-    """高管增减持（向东财富高管持股变动明细）。"""
+    """高管增减持（向东财富高管持股变动明细）。
+
+    额外抓取 A股流通股本（RPT_VALUEANALYSIS_DET.FREE_SHARES_A），
+    计算每条记录的「变动股数占流通股本比例」(ratio_float, %)。
+    """
     rows = _dc("RPTA_WEB_GGMX", '(SCODE="%s")' % code, token=GGMX_TOKEN,
               sort="TDATE", page_size=50)
+    # 流通股本（最新交易日快照）
+    free_shares = None
+    try:
+        vr = _dc("RPT_VALUEANALYSIS_DET", '(SECURITY_CODE="%s")' % code,
+                 sort="TRADE_DATE", page_size=1)
+        if vr:
+            free_shares = _num(vr[0].get("FREE_SHARES_A"))
+    except Exception:  # noqa: BLE001
+        pass
     out = []
     for r in rows:
+        ch = _num(r.get("CHANNUM"))   # 有正负
+        ratio_float = None
+        if ch is not None and free_shares:
+            ratio_float = round(ch / free_shares * 100.0, 6)
         out.append({
             "date": (r.get("TDATE") or "")[:10],
             "name": r.get("GGXM") or r.get("BDR"),
             "title": r.get("ZW"),
             "direction": r.get("BDFX"),         # 增持/减持
-            "shares": _num(r.get("CHANNUM")),   # 有正负
+            "shares": ch,
             "price": _num(r.get("CJJJ")),       # 成交均价
             "amount": _num(r.get("BDJE")),       # 变动金额(元)
             "reason": r.get("BDYY"),
             "after": _num(r.get("BDHCG")),       # 变动后持股
             "relation": r.get("GX"),
+            "free_shares": free_shares,          # A股流通股本(股)
+            "ratio_float": ratio_float,          # 变动股数占流通股本比例(%)
         })
     out.sort(key=lambda x: x["date"] or "", reverse=True)
     return out

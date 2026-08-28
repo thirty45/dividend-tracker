@@ -26,6 +26,7 @@
         <button id="tab-hk">港股通</button>
         <button id="tab-social">社保基金</button>
         <button id="tab-soe">国资红利</button>
+        <button id="tab-watch">自选库</button>
       </nav>
     </div>
   </header>
@@ -336,10 +337,42 @@
       <div id="soe-info" class="muted"></div>
     </section>
 
+    <section id="view-watchlist" hidden>
+      <div class="muted" style="margin-bottom:8px">我的自选库（存于本浏览器 localStorage）· 共 <span id="watch-count">0</span> 只</div>
+      <div class="table-wrap">
+        <table id="watch-table">
+          <thead>
+            <tr>
+              <th>名称(代码)</th>
+              <th class="num">现价</th>
+              <th class="num">涨跌幅%</th>
+              <th class="num">股息率TTM%</th>
+              <th class="num">市盈率</th>
+              <th>行业</th>
+              <th>备忘(添加原因)</th>
+              <th>添加时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="watch-info" class="muted"></div>
+    </section>
+
     <section id="view-detail" hidden>
       <button id="back" class="back">← 返回列表</button>
       <h2 id="d-title"></h2>
       <div id="d-sub" class="muted"></div>
+      <div id="watch-bar" class="watch-bar">
+        <button id="watch-add" class="mini-btn">＋ 加入自选</button>
+        <span id="watch-status" class="muted"></span>
+        <div id="watch-form" hidden>
+          <input id="watch-reason" type="text" placeholder="记录添加原因/备忘（选填）" maxlength="100">
+          <button id="watch-ok" class="mini-btn">确定</button>
+          <button id="watch-cancel" class="mini-btn">取消</button>
+        </div>
+      </div>
       <div id="d-cards" class="cards"></div>
       <div class="toolbar chart-bar">
         <div class="seg" id="k-fq">
@@ -417,7 +450,9 @@
               <table id="exec-table"><thead><tr>
                 <th>日期</th><th>姓名</th><th>职务</th><th>方向</th>
                 <th class="num">变动股数</th><th class="num">成交均价</th>
-                <th class="num">变动金额(元)</th><th>原因</th>
+                <th class="num">变动金额(元)</th>
+                <th class="num" title="变动股数 ÷ 流通股本 × 100%">占流通股本%</th>
+                <th>原因</th>
               </tr></thead><tbody></tbody></table>
             </div>
           </section>

@@ -227,3 +227,17 @@ footer { text-align: center; padding: 18px 10px 30px; }
   #finance-chart { height: 260px; }
   .pf-k { flex-basis: 72px; }
 }
+
+/* ===== 自选库 ===== */
+.watch-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 6px 0 10px; padding: 8px 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+}
+.watch-bar #watch-add { padding: 5px 14px; font-size: 13px; }
+.watch-bar #watch-form { display: flex; align-items: center; gap: 6px; flex: 1 1 320px; }
+#watch-reason { flex: 1; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.watch-reason { color: #3557c4; background: #eef3ff; border-radius: 6px; padding: 1px 7px; }
+#watch-table .watch-edit, #watch-table .watch-del { margin: 0 2px; }
+#watch-table tbody tr { cursor: pointer; }
+#watch-count { font-weight: 600; }
