@@ -1,5 +1,8 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
+/* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
+const APP_VERSION = "2026-08-28-searchfix";
+try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 const $ = (s) => document.querySelector(s);
 const state = {
@@ -24,6 +27,11 @@ const state = {
   socialSort: { inc: { k: "change_num", asc: false },
                 dec: { k: "change_num", asc: true } },
   soe: { items: [] }, soeLoaded: false, soeCat: "all", soeSearch: "",
+  watch: [],                       // 自选库（localStorage 持久化）
+  watchCode: null,                 // 当前详情页正在编辑的股票
+  watchSearch: "",                 // 自选库搜索词
+  boardsSearch: "",                // 板块搜索词
+  cbondsSearch: "",                // 可转债搜索词
 };
 
 const fmt = (v, d = 2) =>
@@ -59,6 +67,7 @@ async function load() {
     state.insiders = (ins && ins.items) || [];
     state.pyMap = new Map();
     state.stocks.forEach((s) => state.pyMap.set(s.code, initials(s.name || "")));
+    state.watch = loadWatch();
     const cbTotal = state.cbonds.listed.length + state.cbonds.pending.length;
     $("#meta").textContent =
       "数据日期 " + snap.date + " · 更新于(北京) " + toBJ(snap.updated_at) +
@@ -155,6 +164,12 @@ function renderList() {
   const info = [];
   if (state.industry) info.push(`行业筛选：${state.industry}`);
   info.push(`显示 ${list.length} / ${state.stocks.length} 只`);
+  // 拼音搜索降级提示：输入纯字母但拼音库未加载（CDN 失败）时，说明原因
+  const q = (state.search || "").trim().toLowerCase();
+  if (list.length === 0 && q && /^[a-z]+$/.test(q)) {
+    const hasPy = Array.from((state.pyMap || new Map()).values()).some((v) => v);
+    if (!hasPy) info.push("拼音库未加载，请改用代码或中文名称搜索");
+  }
   $("#list-info").textContent = info.join(" · ");
   tbody.querySelectorAll("tr").forEach((tr) =>
     tr.addEventListener("click", (e) => {
@@ -166,7 +181,9 @@ function renderList() {
 
 function renderBoards() {
   const tbody = $("#board-table tbody");
-  tbody.innerHTML = state.boards.map((b) => {
+  const q = (state.boardsSearch || "").trim().toLowerCase();
+  const list = q ? state.boards.filter((b) => (b.name || "").toLowerCase().includes(q)) : state.boards;
+  tbody.innerHTML = list.map((b) => {
     const pct = b.pct === null || b.pct === undefined ? null : Number(b.pct);
     const cls = pct > 0 ? "red" : pct < 0 ? "green" : "";
     const txt = pct === null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
@@ -187,7 +204,7 @@ function renderBoards() {
 
 function showView(name) {
   ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
-   "hk", "hk-detail", "social", "soe"].forEach((v) => {
+   "hk", "hk-detail", "social", "soe", "watchlist"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
@@ -198,6 +215,7 @@ function showView(name) {
   $("#tab-hk").classList.toggle("active", name === "hk" || name === "hk-detail");
   $("#tab-social").classList.toggle("active", name === "social");
   $("#tab-soe").classList.toggle("active", name === "soe");
+  $("#tab-watch").classList.toggle("active", name === "watchlist");
   state.view = name;
   window.scrollTo(0, 0);
 }
@@ -215,6 +233,7 @@ async function openDetail(code) {
   $("#d-sub").textContent =
     "行业：" + (it.industry || "—") +
     " · 标签：" + ((it.tags || []).join(" / ") || "—");
+  renderWatchBar(code, it.name || code);
   renderCards(it);
   state.trendCharts.forEach((c) => c && c.dispose());
   state.trendCharts = [];
@@ -750,17 +769,27 @@ function renderFinanceChart() {
 
 function renderExecutives(ex) {
   const tb = $("#exec-table tbody");
-  if (!ex || !ex.length) { tb.innerHTML = `<tr><td colspan="8" class="muted">暂无高管增减持记录</td></tr>`; return; }
+  if (!ex || !ex.length) { tb.innerHTML = `<tr><td colspan="9" class="muted">暂无高管增减持记录</td></tr>`; return; }
   tb.innerHTML = ex.slice(0, 50).map((e) => {
     const dir = e.direction === "增持" ? `<span class="red">增持</span>`
       : e.direction === "减持" ? `<span class="green">减持</span>` : esc(e.direction || "—");
     const sh = e.shares == null ? "—" : (e.shares > 0 ? "+" : "") + Math.round(e.shares).toLocaleString();
     const price = e.price == null ? "—" : fmt(e.price, 2);
     const amt = e.amount == null ? "—" : Math.round(e.amount).toLocaleString();
+    // 变动占流通股本比例：极小值保留足够小数位（去尾零），避免显示 0%
+    let rp = "—";
+    if (e.ratio_float != null) {
+      const v = e.ratio_float;
+      const sign = v > 0 ? "+" : "";
+      const txt = (Math.abs(v) >= 0.01) ? v.toFixed(2) : v.toFixed(6).replace(/0+$/, "");
+      rp = sign + txt + "%";
+    }
+    const rpCls = e.ratio_float > 0 ? "red" : e.ratio_float < 0 ? "green" : "";
     return `<tr><td>${e.date || "—"}</td><td>${esc(e.name || "—")}</td>` +
       `<td>${esc(e.title || "—")}</td><td>${dir}</td>` +
       `<td class="num">${sh}</td><td class="num">${price}</td>` +
-      `<td class="num">${amt}</td><td>${esc(e.reason || "—")}</td></tr>`;
+      `<td class="num">${amt}</td><td class="num ${rpCls}">${rp}</td>` +
+      `<td>${esc(e.reason || "—")}</td></tr>`;
   }).join("");
 }
 
@@ -1421,8 +1450,176 @@ function renderSoe() {
   }
 }
 
+// ==================== 自选库（localStorage 持久化） ====================
+const WATCH_KEY = "hlg_watch_v1";
+
+function loadWatch() {
+  try {
+    const raw = localStorage.getItem(WATCH_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+function saveWatch() {
+  try { localStorage.setItem(WATCH_KEY, JSON.stringify(state.watch)); }
+  catch (e) { /* 存储不可用时静默 */ }
+}
+
+function isWatched(code) {
+  return state.watch.some((w) => w.code === code);
+}
+
+// 详情页关注栏：未关注 → 显示「＋ 加入自选」；已关注 → 显示备忘状态 + 编辑/移除
+function renderWatchBar(code, name) {
+  state.watchCode = code;
+  const btn = $("#watch-add");
+  const status = $("#watch-status");
+  const form = $("#watch-form");
+  if (!btn || !status || !form) return;
+  const w = state.watch.find((x) => x.code === code);
+  form.hidden = true;
+  if (w) {
+    btn.style.display = "none";
+    status.textContent = "已加入自选 · 备忘：" + (w.reason || "（无）") + " · " + (w.added_at || "");
+    status.style.display = "";
+  } else {
+    btn.style.display = "";
+    status.style.display = "none";
+  }
+}
+
+function openWatchForm(code) {
+  const form = $("#watch-form");
+  const input = $("#watch-reason");
+  if (!form || !input) return;
+  const w = state.watch.find((x) => x.code === code);
+  input.value = (w && w.reason) || "";
+  form.hidden = false;
+  input.focus();
+}
+
+function closeWatchForm() {
+  const form = $("#watch-form");
+  if (form) form.hidden = true;
+}
+
+function addToWatch(code, name, reason) {
+  if (isWatched(code)) return;
+  state.watch.push({
+    code, name,
+    reason: (reason || "").trim(),
+    added_at: new Date().toLocaleDateString("zh-CN"),
+  });
+  saveWatch();
+  renderWatchBar(code, name);
+}
+
+function removeFromWatch(code) {
+  state.watch = state.watch.filter((w) => w.code !== code);
+  saveWatch();
+  const it = state.stocks.find((s) => s.code === code);
+  renderWatchBar(code, (it && it.name) || code);
+}
+
+function updateWatchReason(code, reason) {
+  const w = state.watch.find((x) => x.code === code);
+  if (!w) return;
+  w.reason = (reason || "").trim();
+  saveWatch();
+  const it = state.stocks.find((s) => s.code === code);
+  renderWatchBar(code, (it && it.name) || code);
+}
+
+// 自选库页面：表格（名称/行情/备忘/时间/操作），行情实时 join 快照
+function renderWatchlist() {
+  const tbody = $("#watch-table tbody");
+  if (!tbody) return;
+  const countEl = $("#watch-count");
+  if (countEl) countEl.textContent = state.watch.length;
+  if (!state.watch.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">自选库为空，可在任意个股详情页点击「＋ 加入自选」添加</td></tr>';
+    const info = $("#watch-info");
+    if (info) info.textContent = "共 0 只";
+    return;
+  }
+  // 按添加时间倒序（后加的在前）+ 搜索过滤（代码/名称/备忘）
+  const q = (state.watchSearch || "").trim().toLowerCase();
+  let list = state.watch.slice().sort((a, b) =>
+    (b.added_at || "").localeCompare(a.added_at || ""));
+  if (q) {
+    list = list.filter((w) => {
+      const it = state.stocks.find((s) => s.code === w.code) || {};
+      return w.code.toLowerCase().includes(q) ||
+        (w.name || "").toLowerCase().includes(q) ||
+        (w.reason || "").toLowerCase().includes(q) ||
+        (it.name || "").toLowerCase().includes(q) ||
+        (it.industry || "").toLowerCase().includes(q);
+    });
+  }
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">' +
+      (state.watch.length ? "没有匹配「" + esc(state.watchSearch) + "」的自选股" : "自选库为空，可在任意个股详情页点击「＋ 加入自选」添加") +
+      "</td></tr>";
+    const info = $("#watch-info");
+    if (info) info.textContent = "共 " + state.watch.length + " 只" + (q ? " · 搜索命中 0 只" : "");
+    return;
+  }
+  tbody.innerHTML = list.map((w) => {
+    const it = state.stocks.find((s) => s.code === w.code) || {};
+    const pct = it.pct == null ? null : Number(it.pct);
+    const pctCls = pct > 0 ? "red" : pct < 0 ? "green" : "";
+    const pctTxt = pct == null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
+    const reason = w.reason ? `<span class="watch-reason">${esc(w.reason)}</span>` : `<span class="muted">—</span>`;
+    return `<tr data-code="${w.code}">
+      <td class="stock-id">${esc(w.name || it.name || "—")}(${w.code})</td>
+      <td class="num">${fmt(it.close)}</td>
+      <td class="num ${pctCls}">${pctTxt}</td>
+      <td class="num">${fmt(it.dy)}</td>
+      <td class="num">${fmt(it.pe)}</td>
+      <td>${it.industry || "—"}</td>
+      <td>${reason}</td>
+      <td class="num">${w.added_at || "—"}</td>
+      <td class="num">
+        <button class="mini-btn watch-edit" data-code="${w.code}">编辑</button>
+        <button class="mini-btn watch-del" data-code="${w.code}">移除</button>
+      </td></tr>`;
+  }).join("");
+  const info = $("#watch-info");
+  if (info) info.textContent = "共 " + state.watch.length + " 只 · 点击行查看详情 · 数据存于本浏览器";
+  // 行点击 → 详情；编辑/移除按钮不触发跳转
+  tbody.querySelectorAll("tr").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".watch-edit") || e.target.closest(".watch-del")) return;
+      location.hash = "#/stock/" + tr.dataset.code;
+    });
+  });
+  tbody.querySelectorAll(".watch-edit").forEach((b) =>
+    b.addEventListener("click", () => {
+      const code = b.dataset.code;
+      const w = state.watch.find((x) => x.code === code);
+      const reason = window.prompt("编辑备忘（添加原因）：", (w && w.reason) || "");
+      if (reason !== null) updateWatchReason(code, reason);
+      renderWatchlist();
+    })
+  );
+  tbody.querySelectorAll(".watch-del").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (window.confirm("确定从自选库移除 " + b.dataset.code + " 吗？")) {
+        removeFromWatch(b.dataset.code);
+        renderWatchlist();
+      }
+    })
+  );
+}
+
 function route() {
   const h = location.hash || "#/";
+  if (h.startsWith("#/watch")) {
+    renderWatchlist();
+    showView("watchlist");
+    return;
+  }
   if (h.startsWith("#/soe")) {
     loadSoe().then(() => {
       renderSoe();
@@ -1745,14 +1942,22 @@ function cbRowHTML(b) {
 
 function renderCbonds() {
   const c = state.cbonds || { listed: [], pending: [] };
+  const q = (state.cbondsSearch || "").trim().toLowerCase();
+  const hit = (b) => !q ||
+    (b.name || "").toLowerCase().includes(q) ||
+    (b.code || "").toLowerCase().includes(q) ||
+    (b.stock_name || "").toLowerCase().includes(q) ||
+    (b.stock_code || "").toLowerCase().includes(q);
   const p = document.querySelector("#cb-table-pending tbody");
   const l = document.querySelector("#cb-table-listed tbody");
-  if (p) p.innerHTML = c.pending.map(cbRowHTML).join("");
-  if (l) l.innerHTML = c.listed.map(cbRowHTML).join("");
+  if (p) p.innerHTML = c.pending.filter(hit).map(cbRowHTML).join("");
+  if (l) l.innerHTML = c.listed.filter(hit).map(cbRowHTML).join("");
   const pi = document.getElementById("cb-pending-info");
   const li = document.getElementById("cb-listed-info");
-  if (pi) pi.textContent = "已过会 · 未上市（含待申购 / 待上市）共 " + c.pending.length + " 只，按申购日期倒序";
-  if (li) li.textContent = "已上市 共 " + c.listed.length + " 只，按上市日期倒序";
+  if (pi) pi.textContent = "已过会 · 未上市（含待申购 / 待上市）共 " + c.pending.length + " 只" +
+    (q ? " · 命中 " + c.pending.filter(hit).length + " 只" : "") + "，按申购日期倒序";
+  if (li) li.textContent = "已上市 共 " + c.listed.length + " 只" +
+    (q ? " · 命中 " + c.listed.filter(hit).length + " 只" : "") + "，按上市日期倒序";
 }
 
 function renderFunds() {
@@ -1866,9 +2071,11 @@ function setupEvents() {
     const q = e.target.value;
     if (state.view === "funds" || state.view === "fund-detail") {
       state.fundSearch = q;
+      if (state.view === "fund-detail") showView("funds");
       renderFunds();
     } else if (state.view === "hk" || state.view === "hk-detail") {
       state.hkSearch = q;
+      if (state.view === "hk-detail") showView("hk");
       renderHkList();
     } else if (state.view === "social") {
       state.socialSearch = q;
@@ -1876,6 +2083,19 @@ function setupEvents() {
     } else if (state.view === "soe") {
       state.soeSearch = q;
       renderSoe();
+    } else if (state.view === "watchlist") {
+      state.watchSearch = q;
+      renderWatchlist();
+    } else if (state.view === "boards") {
+      state.boardsSearch = q;
+      renderBoards();
+    } else if (state.view === "cbonds") {
+      state.cbondsSearch = q;
+      renderCbonds();
+    } else if (state.view === "detail" || state.view === "tag") {
+      state.search = q;
+      showView("list");
+      renderList();
     } else {
       state.search = q;
       renderList();
@@ -1896,6 +2116,19 @@ function setupEvents() {
   $("#tab-hk").addEventListener("click", () => { location.hash = "#/hk"; });
   $("#tab-social").addEventListener("click", () => { location.hash = "#/social"; });
   $("#tab-soe").addEventListener("click", () => { location.hash = "#/soe"; });
+  $("#tab-watch").addEventListener("click", () => { location.hash = "#/watch"; });
+  // 详情页关注栏：加入自选 / 确定 / 取消
+  $("#watch-add").addEventListener("click", () => openWatchForm(state.watchCode));
+  $("#watch-ok").addEventListener("click", () => {
+    const code = state.watchCode;
+    const it = state.stocks.find((s) => s.code === code);
+    addToWatch(code, (it && it.name) || code, $("#watch-reason").value);
+    closeWatchForm();
+  });
+  $("#watch-cancel").addEventListener("click", closeWatchForm);
+  $("#watch-reason").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("#watch-ok").click();
+  });
   $("#back").addEventListener("click", () => { location.hash = "#/"; });
   $("#back-fund").addEventListener("click", () => { location.hash = "#/funds"; });
   $("#hk-back").addEventListener("click", () => { location.hash = "#/hk"; });
