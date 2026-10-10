@@ -49,6 +49,8 @@ def fetch(url, params=None, headers=None, referer=None, timeout=20,
                 return raw.decode("gbk", errors="replace")
         except HTTPError as he:
             last_err = he
+            if he.code in (400, 404, 501):
+                break
             if he.code == 514:
                 # 频率限制：多等一会儿再试
                 time.sleep(delay * (attempt + 1) + 12)

@@ -584,8 +584,18 @@ def main():
         if not need_full and rbars:
             rbeg = _shift_days(rbars[-1]["d"], -15) or rbeg
         rbars_new = sm.fetch_kline_raw(c, rbeg, "20500101", kline_target)
+        if bars and rbars_new and [b["d"] for b in bars] != [b["d"] for b in rbars_new]:
+            # Different providers can cover different historical ranges. Fetch
+            # both adjustments from one provider before rejecting the pair.
+            print("   %s 双源日期不一致，改用腾讯同源K线" % c, flush=True)
+            bars = sm._fetch_kline_tencent(c, beg, kline_target)
+            rbars_new = sm._fetch_kline_tencent_raw(c, beg, kline_target)
         if not _pair_bars_valid(bars, rbars_new, kline_target):
-            raise RuntimeError("前复权/不复权K线为空、不连续或首尾日期不一致")
+            def span(xs):
+                return "%d根/%s~%s" % (len(xs), xs[0]["d"] if xs else "空",
+                                      xs[-1]["d"] if xs else "空")
+            raise RuntimeError("K线校验失败: 前复权%s，不复权%s，目标%s" %
+                               (span(bars), span(rbars_new), kline_target))
         keep = cfg.get("history_keep", 1400)
         merged = _merge_bars([] if need_full else abars, bars, keep)
         merged_raw = _merge_bars([] if need_full else rbars, rbars_new, keep)

@@ -416,6 +416,7 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
                     continue
         except Exception as exc:  # noqa: BLE001
             failures.append("%s~%s: %s" % (beg_d, end_d, str(exc)[:160]))
+            break
     if failures:
         raise RuntimeError("腾讯日K分段失败（%s）" % "；".join(failures[:5]))
     # 区间接口偶发滞后，补抓最近一段；最终仍按日期去重。
