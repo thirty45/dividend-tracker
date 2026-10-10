@@ -474,8 +474,10 @@ def _pair_bars_valid(qbars, rbars, target_date):
         dates = [str(b.get("d") or "") for b in bars or []]
         return bool(dates and all(dates) and dates == sorted(set(dates))
                     and dates[-1] >= cutoff)
-    return (valid(qbars) and valid(rbars)
-            and [b.get("d") for b in qbars] == [b.get("d") for b in rbars])
+    # Adjustment providers may omit an early listing day or historical bars.
+    # Each series is independent; preserve its full history without inventing
+    # missing prices or requiring an identical trading calendar.
+    return valid(qbars) and valid(rbars)
 
 
 def _fin_vals(row):

@@ -426,8 +426,10 @@ def _pair_bars_valid(qbars, rbars, target_date):
         dates = [str(b.get("d") or "") for b in bars or []]
         return bool(dates and all(dates) and dates == sorted(set(dates))
                     and dates[-1] >= target_date)
-    return (valid(qbars) and valid(rbars)
-            and [b.get("d") for b in qbars] == [b.get("d") for b in rbars])
+    # Adjustment providers may omit an early listing day or historical bars.
+    # Each series is independent; preserve its full history without inventing
+    # missing prices or requiring an identical trading calendar.
+    return valid(qbars) and valid(rbars)
 
 
 def main():
@@ -584,12 +586,6 @@ def main():
         if not need_full and rbars:
             rbeg = _shift_days(rbars[-1]["d"], -15) or rbeg
         rbars_new = sm.fetch_kline_raw(c, rbeg, "20500101", kline_target)
-        if bars and rbars_new and [b["d"] for b in bars] != [b["d"] for b in rbars_new]:
-            # Different providers can cover different historical ranges. Fetch
-            # both adjustments from one provider before rejecting the pair.
-            print("   %s 双源日期不一致，改用腾讯同源K线" % c, flush=True)
-            bars = sm._fetch_kline_tencent(c, beg, kline_target)
-            rbars_new = sm._fetch_kline_tencent_raw(c, beg, kline_target)
         if not _pair_bars_valid(bars, rbars_new, kline_target):
             def span(xs):
                 return "%d根/%s~%s" % (len(xs), xs[0]["d"] if xs else "空",
