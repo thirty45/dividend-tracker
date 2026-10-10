@@ -26,9 +26,6 @@ jobs:
   update-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 240
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v7
@@ -131,6 +128,16 @@ jobs:
         with:
           path: .
 
+  deploy:
+    needs: update-and-deploy
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: 部署到 GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
