@@ -254,6 +254,8 @@ def build():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     host = pick_host()
     quotes = fetch_quotes(host)
+    if not quotes:
+        raise RuntimeError("可转债行情接口返回空数据，保留原快照，禁止覆盖为空列表")
     issue = fetch_issue()
     print("行情: %d 只 (host=%s) | 发行明细: %d 条" % (len(quotes), host, len(issue)))
 

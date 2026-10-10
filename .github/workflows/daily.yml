@@ -7,6 +7,11 @@ on:
     - cron: '30 8 * * *'
     - cron: '30 13 * * *'
   workflow_dispatch:
+    inputs:
+      notify:
+        description: Send configured external alerts
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -21,6 +26,9 @@ jobs:
   update-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 240
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v7
@@ -47,30 +55,37 @@ jobs:
         run: python pipeline/update_daily.py
         env:
           PYTHONUNBUFFERED: '1'
-          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
-          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          SERVERCHAN_KEY: ${{ (github.event_name != 'workflow_dispatch' || inputs.notify) && secrets.SERVERCHAN_KEY || '' }}
+          WECOM_WEBHOOK: ${{ (github.event_name != 'workflow_dispatch' || inputs.notify) && secrets.WECOM_WEBHOOK || '' }}
 
       - name: 构建红利/宽基基金数据
+        id: funds
         run: python pipeline/funds.py
         env:
           PYTHONUNBUFFERED: '1'
 
       - name: 构建可转债数据
+        id: cbonds
+        continue-on-error: true
         run: python pipeline/cbonds.py
         env:
           PYTHONUNBUFFERED: '1'
 
       - name: 构建港股通数据
+        id: hk
+        continue-on-error: true
         run: python pipeline/hk.py
         env:
           PYTHONUNBUFFERED: '1'
 
       - name: 构建社保基金调仓数据
+        id: social
         run: python pipeline/social_security.py
         env:
           PYTHONUNBUFFERED: '1'
 
       - name: 构建国资红利数据
+        id: soe
         run: python pipeline/soe.py
         env:
           PYTHONUNBUFFERED: '1'
@@ -86,6 +101,18 @@ jobs:
             data/hk/kline
             data/hk/kline_raw
           key: kline-${{ github.run_id }}
+
+      - name: 汇报模块状态
+        if: always()
+        run: |
+          echo "| 模块 | 执行结果 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 基金 | ${{ steps.funds.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 可转债 | ${{ steps.cbonds.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 港股通 | ${{ steps.hk.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 社保基金 | ${{ steps.social.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 国资红利 | ${{ steps.soe.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "失败模块保留此前快照；各模块日期见网页。" >> "$GITHUB_STEP_SUMMARY"
 
       - name: 提交数据变更
         run: |
