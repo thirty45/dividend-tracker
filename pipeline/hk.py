@@ -186,25 +186,49 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
     key = "qfqday" if qfq else "day"
     bars = []
     failures = []
+    cache_dir = os.path.join(BASE, "data", "hk", "kline_segments")
+    os.makedirs(cache_dir, exist_ok=True)
     for beg_d, end_d in _iter_date_windows(beg, end):
         try:
+            cache_path = os.path.join(cache_dir, "%s-%s-%s-%s.json" %
+                                      (sym, adj or "raw", beg_d, end_d))
+            cached = None
+            if not qfq and end_d < datetime.date.today().isoformat() and os.path.exists(cache_path):
+                try:
+                    with open(cache_path, encoding="utf-8") as f:
+                        cached = json.load(f)
+                except (OSError, ValueError):
+                    pass
+            if cached is not None:
+                bars.extend(cached)
+                continue
+            time.sleep(0.25)
             j = fetch_json(KLINE_URL, params={
                 "param": "%s,day,%s,%s,1000,%s" %
                          (sym, beg_d, end_d, adj)},
                 referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+            if j.get("code") not in (None, 0):
+                raise RuntimeError("腾讯接口返回错误: %s" % j.get("code"))
             data = (j.get("data") or {}).get(sym) or {}
             rows = data.get(key) or (data.get("day") if qfq else []) or []
+            segment_bars = []
             for row in rows:
                 if len(row) < 6:
                     continue
                 try:
-                    bars.append({"d": row[0], "o": float(row[1]),
+                    segment_bars.append({"d": row[0], "o": float(row[1]),
                                  "c": float(row[2]), "h": float(row[3]),
                                  "l": float(row[4]), "v": float(row[5])})
                 except (TypeError, ValueError):
                     continue
+            bars.extend(segment_bars)
+            # Only raw historical prices are immutable across future corporate actions.
+            if segment_bars and not qfq and end_d < datetime.date.today().isoformat():
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(segment_bars, f)
         except Exception as exc:  # noqa: BLE001
             failures.append("%s~%s: %s" % (beg_d, end_d, str(exc)[:160]))
+            break  # Fail early instead of continuing a doomed full-history request.
     if failures:
         raise RuntimeError("港股腾讯日K分段失败（%s）" % "；".join(failures[:5]))
     # 区间接口偶发滞后，补抓最近一段；与分段数据合并后仍按日期去重。
@@ -546,20 +570,16 @@ def build():
             klines[c], raws[c] = ab, rb
             full_dates[c] = af or rf or today
             continue
-        need_full = not ab or not rb or not ac or not rc
-        if not need_full:
-            try:
-                last_full = datetime.date.fromisoformat(af or rf or "")
-                if (datetime.date.today() - last_full).days >= full_interval:
-                    need_full = True
-            except ValueError:
-                need_full = True
+        # Legacy caches still provide useful history; missing metadata is not
+        # a reason to download decades again. Scheduled updates are incremental.
+        need_full = not ab or not rb
         todo.append((c, ab or [], rb or [], need_full, af or rf or today))
         old_by_code[c] = (ab or [], rb or [], af or rf or today)
 
     def _pair(item):
         c, ab, rb, need_full, full_date = item
-        beg = KLINE_START
+        listed = _shift_days(comps[c].get("f26"), 0)
+        beg = max(KLINE_START, listed) if listed else KLINE_START
         if not need_full and ab:
             beg = _shift_days(ab[-1]["d"], -15) or beg
         bars = fetch_hk_kline(c, beg=beg, qfq=True)
@@ -569,12 +589,26 @@ def build():
         rbars = fetch_hk_kline(c, beg=rbeg, qfq=False)
         if not _pair_bars_valid(bars, rbars, today):
             raise RuntimeError("前复权/不复权K线为空、不连续或首尾日期不一致")
+        if not need_full and ab:
+            prior = {b["d"]: b for b in ab}
+            ratios = [b["c"] / prior[b["d"]]["c"] for b in bars
+                      if b["d"] in prior and prior[b["d"]].get("c")]
+            if ratios:
+                ratios.sort()
+                factor = ratios[len(ratios) // 2]
+                if abs(factor - 1) > 0.0001:
+                    # A single factor must explain the overlap, otherwise retain
+                    # the original files rather than combine incompatible prices.
+                    if any(abs(r / factor - 1) > 0.01 for r in ratios):
+                        raise RuntimeError("复权比例不一致，保留缓存等待复核")
+                    ab = [dict(b, **{k: b[k] * factor for k in ("o", "h", "l", "c")})
+                          for b in ab]
         merged = _merge_bars([] if need_full else ab, bars)
         merged_raw = _merge_bars([] if need_full else rb, rbars)
         full = today if need_full else full_date
         return c, merged, merged_raw, full
 
-    with ThreadPoolExecutor(max_workers=16) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futs = {ex.submit(_pair, item): item[0] for item in todo}
         for fut in as_completed(futs):
             c = futs[fut]

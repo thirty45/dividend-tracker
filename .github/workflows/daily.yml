@@ -44,6 +44,7 @@ jobs:
             data/kline_raw
             data/hk/kline
             data/hk/kline_raw
+            data/hk/kline_segments
           key: kline-${{ github.run_id }}
           restore-keys: |
             kline-
@@ -97,6 +98,7 @@ jobs:
             data/kline_raw
             data/hk/kline
             data/hk/kline_raw
+            data/hk/kline_segments
           key: kline-${{ github.run_id }}
 
       - name: 汇报模块状态
