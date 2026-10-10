@@ -189,6 +189,17 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .rank-list .rc:hover { color: var(--blue); text-decoration: underline; }
 .rank-list .rv { font-weight: 600; }
 .rank-list .rank-empty { color: var(--muted); font-size: 12px; padding: 4px 0; }
+/* 布林下轨旁的 DMA 低位表 */
+.rank-side { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.45fr); gap: 10px; min-width: 0; }
+.rank-dma .rank-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rank-dma-count { color: var(--muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.rank-dma-scroll { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; }
+.rank-dma-table { width: 100%; font-size: 12px; }
+.rank-dma-table th, .rank-dma-table td { padding: 5px 7px; }
+.rank-dma-table th { position: sticky; top: 0; z-index: 1; }
+.rank-dma-table tbody tr { cursor: pointer; }
+.rank-dma-table .dma-name:hover { color: var(--blue); text-decoration: underline; }
+.rank-dma-empty { color: var(--muted); font-size: 12px; padding: 7px 2px; }
 
 /* 高管增持排名表（全宽） */
 .insider-rank { margin: 0 0 12px; }
@@ -226,6 +237,8 @@ footer { text-align: center; padding: 18px 10px 30px; }
   .ci-mod { padding: 12px 12px 14px; }
   #finance-chart { height: 260px; }
   .pf-k { flex-basis: 72px; }
+  .rank-side { grid-template-columns: 1fr; }
+  .rank-dma-scroll { max-height: 260px; }
 }
 
 /* ===== 自选库 ===== */

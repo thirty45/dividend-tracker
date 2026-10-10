@@ -108,6 +108,49 @@ def _boll_below_days(bars, period=20, k=2.0):
     return days
 
 
+def _dma_white_series(bars, short=5, long=89):
+    """DMA 白线（DIF = MA(C,short) - MA(C,long)）的有效历史序列。"""
+    if not bars or len(bars) < long:
+        return []
+    closes = []
+    for b in bars:
+        try:
+            value = float(b.get("c"))
+        except (TypeError, ValueError):
+            value = None
+        closes.append(value)
+    # 最新长均线窗口不完整时，不能把更早的有效值误当作当前白线。
+    if any(value is None for value in closes[-long:]):
+        return []
+    out = []
+    for i in range(long - 1, len(closes)):
+        short_win = closes[i - short + 1:i + 1]
+        long_win = closes[i - long + 1:i + 1]
+        if any(v is None for v in short_win) or any(v is None for v in long_win):
+            continue
+        out.append(sum(short_win) / short - sum(long_win) / long)
+    return out
+
+
+def _quantile(values, q):
+    """线性插值分位数；values 为空时返回 None。"""
+    if not values:
+        return None
+    ordered = sorted(values)
+    pos = (len(ordered) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    frac = pos - lo
+    return ordered[lo] + (ordered[hi] - ordered[lo]) * frac
+
+
+def _empirical_percentile(values, current):
+    """当前值在历史序列中的经验分位（0-100，重复值计入）。"""
+    if not values or current is None:
+        return None
+    return sum(value <= current for value in values) / len(values) * 100
+
+
 def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=None):
     """为每只股票计算派生字段并写回 item（就地修改）。
 
@@ -135,6 +178,23 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         it["yang7"] = _streak_yang(bars, 7)
         # 连续跌破布林带下轨天数（20日 ± 2σ，首页排名框用）
         it["boll_days"] = _boll_below_days(bars)
+        # DMA(5,89,36) 白线：历史最低30%按 DIF 历史序列的30%分位判定。
+        dma_values = _dma_white_series(bars, 5, 89)
+        if len(dma_values) >= 30:
+            dma_p30 = _quantile(dma_values, 0.30)
+            dma_white = dma_values[-1]
+            it["dma_white"] = round(dma_white, 6)
+            it["dma_white_p30"] = round(dma_p30, 6)
+            it["dma_white_percentile"] = round(
+                _empirical_percentile(dma_values, dma_white), 1)
+            it["dma_samples"] = len(dma_values)
+            it["dma_low30"] = dma_white <= dma_p30
+        else:
+            it["dma_white"] = None
+            it["dma_white_p30"] = None
+            it["dma_white_percentile"] = None
+            it["dma_samples"] = len(dma_values)
+            it["dma_low30"] = False
 
         comp = None
         cp = os.path.join(company_dir, code + ".json")
@@ -309,7 +369,7 @@ def _shift_days(d, days):
     return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
 
 
-def _merge_bars(old, new, keep=1400):
+def _merge_bars(old, new, keep=0):
     """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
     by = {}
     for b in old or []:
@@ -318,6 +378,56 @@ def _merge_bars(old, new, keep=1400):
         by[b["d"]] = b
     bars = [by[d] for d in sorted(by)]
     return bars[-keep:] if keep else bars
+
+
+def _has_complete_coverage(path, target_date):
+    """只有带完整覆盖元数据且最新日期不落后时，才允许日更跳过。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        bars = payload.get("bars") or []
+        return bool(payload.get("coverage_complete")
+                    and payload.get("coverage_start")
+                    and payload.get("coverage_end")
+                    and bars
+                    and payload["coverage_end"] >= target_date
+                    and bars[0].get("d") == payload["coverage_start"]
+                    and bars[-1].get("d") == payload["coverage_end"])
+    except (OSError, ValueError, TypeError, KeyError, IndexError):
+        return False
+
+
+def _all_kline_coverage(codes, kline_dir, raw_dir, target_date):
+    """检查当前有效股票池的前复权/不复权文件是否都完成覆盖。"""
+    for code in codes:
+        if not _has_complete_coverage(os.path.join(kline_dir, code + ".json"),
+                                      target_date):
+            return False
+        if not _has_complete_coverage(os.path.join(raw_dir, code + ".json"),
+                                      target_date):
+            return False
+    return bool(codes)
+
+
+def _coverage_fields(bars, target_date):
+    """为K线文件生成可审计的覆盖元数据。"""
+    start = bars[0].get("d") if bars else ""
+    end = bars[-1].get("d") if bars else ""
+    return {
+        "coverage_start": start or "",
+        "coverage_end": end or "",
+        "coverage_complete": bool(start and end and end >= target_date),
+    }
+
+
+def _pair_bars_valid(qbars, rbars, target_date):
+    """日更写入前校验两套K线均连续升序去重且覆盖同一首尾日期。"""
+    def valid(bars):
+        dates = [str(b.get("d") or "") for b in bars or []]
+        return bool(dates and all(dates) and dates == sorted(set(dates))
+                    and dates[-1] >= target_date)
+    return (valid(qbars) and valid(rbars)
+            and [b.get("d") for b in qbars] == [b.get("d") for b in rbars])
 
 
 def main():
@@ -342,6 +452,14 @@ def main():
 
     watch = load_watchlist()
     stocks = watch["stocks"]
+    exclude_prefixes = tuple(str(p) for p in cfg.get("exclude_code_prefixes", [])
+                             if str(p))
+    if exclude_prefixes:
+        before = len(stocks)
+        stocks = [s for s in stocks
+                  if not str(s.get("code") or "").startswith(exclude_prefixes)]
+        print("按代码前缀 %s 防御性剔除 %d 只" %
+              (", ".join(exclude_prefixes), before - len(stocks)))
     if args.limit:
         stocks = stocks[:args.limit]
     codes = [s["code"] for s in stocks]
@@ -364,19 +482,17 @@ def main():
             stored = json.load(f)
     kline_stale = bool(probe_date) and probe_date != (stored.get("kline_date") or "")
     snapshot_stale = trade_date != (stored.get("date") or "")
+    kline_target = probe_date or trade_date
     print("估值交易日=%s 探针K线日=%s 已存(date=%s, kline=%s)"
           % (trade_date, probe_date, stored.get("date"), stored.get("kline_date")))
     if not args.force and not snapshot_stale and not kline_stale:
-        kline_files = [f for f in os.listdir(kline_dir)
-                       if f.endswith(".json")]
-        if kline_files:
-            print("数据已是最新(%s)，跳过" % trade_date)
+        if _all_kline_coverage(codes, kline_dir, raw_dir, kline_target):
+            print("数据已是最新且K线覆盖标记完整(%s)，跳过" % trade_date)
             return 0
-        print("日期一致但缺少K线文件，重新生成K线数据")
+        print("日期一致但K线覆盖标记缺失/过期，安排完整回填")
     if kline_stale and not snapshot_stale:
         print("K线已有新交易日(%s)，刷新K线；估值数据尚未更新则快照沿用 %s"
               % (probe_date, trade_date))
-    kline_target = probe_date or trade_date
     print("股票池: %d 只（交易日 %s）" % (len(codes), trade_date))
 
     print("1/5 抓取全市场估值快照 ...")
@@ -397,6 +513,7 @@ def main():
     print("4/5 抓取K线(并发) ...", flush=True)
     klines = {}
     raw_klines = {}
+    full_dates = {}
     todo = []          # (code, 已有前复权bars, 已有未复权bars, 是否全量, full_date)
     today_iso = datetime.date.today().isoformat()
     full_interval = cfg.get("kline_full_days", 7)
@@ -421,13 +538,18 @@ def main():
                 raw_full = oldr.get("full_date") or ""
             except Exception:  # noqa: BLE001
                 raw_bars = None
-        cur_adj = bool(adj_bars and adj_bars[-1].get("d", "") >= kline_target)
-        cur_raw = bool(raw_bars and raw_bars[-1].get("d", "") >= kline_target)
+        cur_adj = bool(adj_bars and adj_bars[-1].get("d", "") >= kline_target
+                       and _has_complete_coverage(pa, kline_target))
+        cur_raw = bool(raw_bars and raw_bars[-1].get("d", "") >= kline_target
+                       and _has_complete_coverage(pr, kline_target))
         if cur_adj and cur_raw:
             klines[c] = adj_bars
             raw_klines[c] = raw_bars
+            full_dates[c] = adj_full or raw_full or today_iso
             continue
-        need_full = args.force or not adj_bars or not raw_bars
+        need_full = (args.force or not adj_bars or not raw_bars
+                     or not _has_complete_coverage(pa, kline_target)
+                     or not _has_complete_coverage(pr, kline_target))
         full_ref = adj_full or raw_full or ""
         if not need_full:
             try:
@@ -462,12 +584,16 @@ def main():
         if not need_full and rbars:
             rbeg = _shift_days(rbars[-1]["d"], -15) or rbeg
         rbars_new = sm.fetch_kline_raw(c, rbeg, "20500101", kline_target)
+        if not _pair_bars_valid(bars, rbars_new, kline_target):
+            raise RuntimeError("前复权/不复权K线为空、不连续或首尾日期不一致")
         keep = cfg.get("history_keep", 1400)
         merged = _merge_bars([] if need_full else abars, bars, keep)
         merged_raw = _merge_bars([] if need_full else rbars, rbars_new, keep)
         full = today_iso if need_full else full_date
         return c, name, merged, merged_raw, full
 
+    old_by_code = {item[0]: (item[1], item[2], item[4]) for item in todo}
+    failed_codes = set()
     with ThreadPoolExecutor(max_workers=cfg.get("workers", 6)) as ex:
         futs = {ex.submit(_fetch_pair, item): item[0]
                 for item in todo}
@@ -480,24 +606,30 @@ def main():
                 c2 = c
                 print("   K线失败 %s: %s" % (c, exc), flush=True)
                 name = name_map.get(c, "")
-                bars, rbars, full_date = [], [], today_iso
+                bars, rbars, full_date = old_by_code.get(c, ([], [], today_iso))
+                failed_codes.add(c)
             klines[c2] = bars
             raw_klines[c2] = rbars
+            full_dates[c2] = full_date
+            if c2 in failed_codes:
+                continue
             if name:
                 name_map[c2] = name
             # 边抓边写，断点可续
             path = os.path.join(kline_dir, c2 + ".json")
             with open(path, "w", encoding="utf-8") as f:
-                json.dump({"code": c2, "name": name_map.get(c2, ""),
+                payload = {"code": c2, "name": name_map.get(c2, ""),
                            "date": kline_target, "updated": now_iso,
-                           "full_date": full_date,
-                           "bars": klines[c2]}, f, ensure_ascii=False)
+                           "full_date": full_date, "bars": klines[c2]}
+                payload.update(_coverage_fields(klines[c2], kline_target))
+                json.dump(payload, f, ensure_ascii=False)
             pathr = os.path.join(raw_dir, c2 + ".json")
             with open(pathr, "w", encoding="utf-8") as f:
-                json.dump({"code": c2, "name": name_map.get(c2, ""),
+                payload = {"code": c2, "name": name_map.get(c2, ""),
                            "date": kline_target, "updated": now_iso,
-                           "full_date": full_date,
-                           "bars": raw_klines[c2]}, f, ensure_ascii=False)
+                           "full_date": full_date, "bars": raw_klines[c2]}
+                payload.update(_coverage_fields(raw_klines[c2], kline_target))
+                json.dump(payload, f, ensure_ascii=False)
             done_count[0] += 1
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
@@ -736,19 +868,42 @@ def main():
     with open(os.path.join(data_root, "snapshot_%s.json" % trade_date),
               "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False)
+    dma_items = [{"code": it["code"], "name": it.get("name"),
+                  "white": it.get("dma_white"),
+                  "threshold": it.get("dma_white_p30"),
+                  "percentile": it.get("dma_white_percentile"),
+                  "samples": it.get("dma_samples")}
+                 for it in items if it.get("dma_low30")]
+    dma_items.sort(key=lambda it: (
+        it.get("percentile") is None,
+        it.get("percentile") if it.get("percentile") is not None else float("inf"),
+        it.get("code") or ""))
+    with open(os.path.join(meta_dir, "dma_low30.json"), "w", encoding="utf-8") as f:
+        json.dump({"date": trade_date,
+                   "params": {"short": 5, "long": 89, "signal": 36,
+                              "percentile": 0.30},
+                   "items": dma_items}, f, ensure_ascii=False)
 
     for c, bars in klines.items():
+        if c in failed_codes:
+            continue
         path = os.path.join(kline_dir, c + ".json")
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"code": c, "name": name_map.get(c, ""),
-                       "date": kline_target, "updated": now, "bars": bars},
-                      f, ensure_ascii=False)
+            payload = {"code": c, "name": name_map.get(c, ""),
+                       "date": kline_target, "updated": now,
+                       "full_date": full_dates.get(c, today_iso), "bars": bars}
+            payload.update(_coverage_fields(bars, kline_target))
+            json.dump(payload, f, ensure_ascii=False)
     for c, rbars in raw_klines.items():
+        if c in failed_codes:
+            continue
         pathr = os.path.join(raw_dir, c + ".json")
         with open(pathr, "w", encoding="utf-8") as f:
-            json.dump({"code": c, "name": name_map.get(c, ""),
-                       "date": kline_target, "updated": now, "bars": rbars},
-                      f, ensure_ascii=False)
+            payload = {"code": c, "name": name_map.get(c, ""),
+                       "date": kline_target, "updated": now,
+                       "full_date": full_dates.get(c, today_iso), "bars": rbars}
+            payload.update(_coverage_fields(rbars, kline_target))
+            json.dump(payload, f, ensure_ascii=False)
 
     for it in items:
         path = os.path.join(hist_dir, it["code"] + ".json")

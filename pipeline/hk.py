@@ -31,13 +31,18 @@ sys.path.insert(0, BASE)
 from pipeline.net import fetch, fetch_json  # noqa: E402
 
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
+CLIST_FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 KLINE_URL = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
 FIN_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 FS = "b:DLMK0146,b:DLMK0144"          # 港股通(沪)+港股通(深) 成分
 UT = "bd1d9ddb04089700cf9c27f6f7426281"
 CLIST_FIELDS = ("f2,f3,f5,f6,f8,f9,f12,f14,f15,f16,f17,f18,f20,f21,f23,"
                 "f25,f26,f37,f100,f115")
-KLINE_START = "20210101"              # 与 A 股模块一致：约 5 年
+KLINE_START = "19800101"              # 覆盖港股通标的可取得的上市以来历史
+
+# 成分接口偶发 502 时，允许使用上一份快照继续完成其余数据更新。
+COMPONENTS_SOURCE = "unknown"
+COMPONENTS_ASOF = ""
 
 
 def _norm_date(s):
@@ -48,31 +53,103 @@ def _norm_date(s):
     return s
 
 
+def _error_summary(exc):
+    """压缩网络异常信息，避免把完整请求 URL 写入 Actions 日志。"""
+    text = str(exc).replace("\n", " ")
+    if " -> " in text:
+        text = text.rsplit(" -> ", 1)[-1]
+    return text[:180] or type(exc).__name__
+
+
+def _load_cached_components():
+    """从上一份港股通快照重建成分行情行，供接口故障时兜底。"""
+    path = os.path.join(BASE, "data", "hk", "snapshot.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            snap = json.load(f)
+    except Exception as exc:  # noqa: BLE001
+        print("   港股通成分缓存读取失败：%s" % _error_summary(exc),
+              file=sys.stderr, flush=True)
+        return {}, ""
+
+    rows = {}
+    for item in snap.get("items") or []:
+        code = str(item.get("code") or "").strip()
+        if not code:
+            continue
+        code = code.zfill(5)
+        mv = item.get("mv")
+        try:
+            mv_raw = float(mv) * 1e8 if mv is not None else None
+        except (TypeError, ValueError):
+            mv_raw = None
+        rows[code] = {
+            "f2": item.get("close"),
+            "f3": item.get("pct"),
+            "f14": item.get("name") or code,
+            "f20": mv_raw,
+            "f23": item.get("pb"),
+            "f25": item.get("ytd"),
+            "f26": item.get("list_date"),
+            "f100": item.get("industry") or "",
+            "f115": item.get("pe"),
+        }
+    return rows, str(snap.get("date") or "")
+
+
 def fetch_components():
     """港股通成分行情 -> {code: row}（约 620 只）。"""
-    rows = {}
-    pn = 1
-    while pn <= 20:
-        url = CLIST_URL + "?" + urllib.parse.urlencode({
-            "pn": pn, "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2,
-            "ut": UT, "fid": "f12", "fs": FS, "fields": CLIST_FIELDS,
-        })
-        try:
-            j = fetch_json(url, referer="https://quote.eastmoney.com/",
-                           timeout=20, retries=3, delay=1.0)
-        except Exception:  # noqa: BLE001
-            break
-        d = (j.get("data") or {}).get("diff") or []
-        if not d:
-            break
-        for r in d:
-            code = r.get("f12")
-            if code:
-                rows[code] = r
-        if len(d) < 100:
-            break
-        pn += 1
-    return rows
+    global COMPONENTS_SOURCE, COMPONENTS_ASOF
+    COMPONENTS_SOURCE = "unavailable"
+    COMPONENTS_ASOF = ""
+    params = {
+        "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2,
+        "ut": UT, "fid": "f12", "fs": FS, "fields": CLIST_FIELDS,
+    }
+    errors = []
+    for base_url in (CLIST_URL, CLIST_FALLBACK_URL):
+        rows = {}
+        pn = 1
+        endpoint_failed = False
+        while pn <= 20:
+            query = dict(params)
+            query["pn"] = pn
+            url = base_url + "?" + urllib.parse.urlencode(query)
+            try:
+                j = fetch_json(url, referer="https://quote.eastmoney.com/",
+                               timeout=20, retries=3, delay=1.0)
+            except Exception as exc:  # noqa: BLE001
+                endpoint_failed = True
+                errors.append("%s：%s" % (base_url, _error_summary(exc)))
+                print("   港股通成分接口请求失败（第%d页）：%s" %
+                      (pn, _error_summary(exc)), file=sys.stderr, flush=True)
+                break
+            d = (j.get("data") or {}).get("diff") or []
+            if not d:
+                break
+            for r in d:
+                code = r.get("f12")
+                if code:
+                    rows[str(code).zfill(5)] = r
+            if len(d) < 100:
+                break
+            pn += 1
+        if rows and not endpoint_failed:
+            COMPONENTS_SOURCE = base_url
+            COMPONENTS_ASOF = datetime.date.today().isoformat()
+            return rows
+
+    rows, asof = _load_cached_components()
+    if rows:
+        COMPONENTS_SOURCE = "snapshot-cache"
+        COMPONENTS_ASOF = asof
+        print("   成分接口不可用，使用缓存快照 %s（%d 只）" %
+              (asof or "日期未知", len(rows)), file=sys.stderr, flush=True)
+        return rows
+    if errors:
+        print("   港股通成分接口和缓存均不可用：%s" % "；".join(errors),
+              file=sys.stderr, flush=True)
+    return {}
 
 
 def _num(v, div=1):
@@ -85,59 +162,82 @@ def _num(v, div=1):
     return f / div if div and div != 1 else f
 
 
-def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
-    """腾讯港股日K -> bars [{d,o,c,h,l,v}]；失败返回 []。"""
-    if end is None:
-        end = datetime.date.today().strftime("%Y%m%d")
-    sym = "hk" + code
-    beg_d = _norm_date(beg)
-    end_d = _norm_date(end)
-    adj = "qfq" if qfq else ""
-    bars = []
-    # 增量窗口：按 beg 距今自然日估算需要的根数，避免总是拉最近700根
-    gap_count = 700
+KLINE_SEGMENT_DAYS = 900  # 约 640 个交易日，低于腾讯单次约 1000 根上限
+
+
+def _iter_date_windows(beg, end, chunk_days=KLINE_SEGMENT_DAYS):
+    """按自然日切片，避免腾讯区间接口静默截断较早 K 线。"""
     try:
-        gap_days = (datetime.date.today() - datetime.date.fromisoformat(beg_d)).days
-        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
-    except Exception:  # noqa: BLE001
-        pass
-    # 历史段（beg -> 2023-12-31，最多 1000 根）
-    if beg_d.replace("-", "") < "20240101":
+        start = datetime.date.fromisoformat(_norm_date(beg))
+        finish = datetime.date.fromisoformat(_norm_date(end))
+    except (TypeError, ValueError):
+        return
+    finish = min(finish, datetime.date.today())
+    while start <= finish:
+        stop = min(start + datetime.timedelta(days=chunk_days - 1), finish)
+        yield start.strftime("%Y-%m-%d"), stop.strftime("%Y-%m-%d")
+        start = stop + datetime.timedelta(days=1)
+
+
+def _fetch_tencent_segments(sym, beg, end, qfq):
+    """腾讯日 K 分段抓取并去重；qfq=True 时优先读取 qfqday。"""
+    end = end or datetime.date.today().strftime("%Y%m%d")
+    adj = "qfq" if qfq else ""
+    key = "qfqday" if qfq else "day"
+    bars = []
+    failures = []
+    for beg_d, end_d in _iter_date_windows(beg, end):
         try:
             j = fetch_json(KLINE_URL, params={
-                "param": "%s,day,%s,2023-12-31,1000,%s" % (sym, beg_d, adj)},
+                "param": "%s,day,%s,%s,1000,%s" %
+                         (sym, beg_d, end_d, adj)},
                 referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
-            for row in ((j.get("data") or {}).get(sym) or {}).get("day") or []:
+            data = (j.get("data") or {}).get(sym) or {}
+            rows = data.get(key) or (data.get("day") if qfq else []) or []
+            for row in rows:
                 if len(row) < 6:
                     continue
                 try:
-                    bars.append({"d": row[0], "o": float(row[1]), "c": float(row[2]),
-                                 "h": float(row[3]), "l": float(row[4]),
-                                 "v": float(row[5])})
-                except ValueError:
+                    bars.append({"d": row[0], "o": float(row[1]),
+                                 "c": float(row[2]), "h": float(row[3]),
+                                 "l": float(row[4]), "v": float(row[5])})
+                except (TypeError, ValueError):
                     continue
-        except Exception:  # noqa: BLE001
-            pass
-    # 近段（最近 gap_count 根，覆盖到今天）
+        except Exception as exc:  # noqa: BLE001
+            failures.append("%s~%s: %s" % (beg_d, end_d, str(exc)[:160]))
+    if failures:
+        raise RuntimeError("港股腾讯日K分段失败（%s）" % "；".join(failures[:5]))
+    # 区间接口偶发滞后，补抓最近一段；与分段数据合并后仍按日期去重。
+    try:
+        start = datetime.date.fromisoformat(_norm_date(beg))
+        gap_days = (datetime.date.today() - start).days
+        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
+    except (TypeError, ValueError):
+        gap_count = 700
     try:
         j2 = fetch_json(KLINE_URL, params={
             "param": "%s,day,,,%d,%s" % (sym, gap_count, adj)},
             referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
-        for row in ((j2.get("data") or {}).get(sym) or {}).get("day") or []:
+        data2 = (j2.get("data") or {}).get(sym) or {}
+        rows2 = data2.get(key) or (data2.get("day") if qfq else []) or []
+        for row in rows2:
             if len(row) < 6:
                 continue
             try:
-                bars.append({"d": row[0], "o": float(row[1]), "c": float(row[2]),
-                             "h": float(row[3]), "l": float(row[4]),
-                             "v": float(row[5])})
-            except ValueError:
+                bars.append({"d": row[0], "o": float(row[1]),
+                             "c": float(row[2]), "h": float(row[3]),
+                             "l": float(row[4]), "v": float(row[5])})
+            except (TypeError, ValueError):
                 continue
-    except Exception:  # noqa: BLE001
-        pass
-    by_date = {}
-    for b in bars:
-        by_date[b["d"]] = b
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("港股腾讯日K最近段失败: %s" % str(exc)[:240]) from exc
+    by_date = {b["d"]: b for b in bars}
     return [by_date[d] for d in sorted(by_date)]
+
+
+def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
+    """腾讯港股日K -> bars [{d,o,c,h,l,v}]；分段抓取并去重。"""
+    return _fetch_tencent_segments("hk" + code, beg, end, qfq)
 
 
 def fetch_financial(codes, page_size=500):
@@ -257,6 +357,21 @@ def _pct_from_bars(bars, n):
     return round((last - prev) / prev * 100.0, 2)
 
 
+def _refresh_cached_quote(q, bars):
+    """缓存成分兜底时，用腾讯日 K 的最新收盘价修正报价字段。"""
+    if COMPONENTS_SOURCE != "snapshot-cache" or not bars:
+        return
+    last = bars[-1]
+    close = last.get("c")
+    if close is None:
+        return
+    q["f2"] = close
+    if len(bars) >= 2:
+        previous = bars[-2].get("c")
+        if previous:
+            q["f3"] = round((close - previous) / previous * 100.0, 2)
+
+
 def _streak(bars, n, mode):
     """mode: down(收跌)/yin(收阴)/yang(收阳)。数据不足返回 False。"""
     if not bars or len(bars) < n + (0 if mode != "down" else 1):
@@ -305,7 +420,7 @@ def _shift_days(d, days):
     return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
 
 
-def _merge_bars(old, new, keep=1500):
+def _merge_bars(old, new, keep=0):
     """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
     by = {}
     for b in old or []:
@@ -314,6 +429,29 @@ def _merge_bars(old, new, keep=1500):
         by[b["d"]] = b
     bars = [by[d] for d in sorted(by)]
     return bars[-keep:] if keep else bars
+
+
+def _coverage_fields(bars, target_date):
+    """为港股K线文件生成可审计的覆盖元数据。"""
+    start = bars[0].get("d") if bars else ""
+    end = bars[-1].get("d") if bars else ""
+    return {
+        "coverage_start": start or "",
+        "coverage_end": end or "",
+        "coverage_complete": bool(start and end and end >= target_date),
+    }
+
+
+def _pair_bars_valid(qbars, rbars, target_date):
+    """港股写入前校验两套K线均连续升序去重且首尾日期一致。"""
+    cutoff = (datetime.date.fromisoformat(target_date)
+              - datetime.timedelta(days=7)).isoformat()
+    def valid(bars):
+        dates = [str(b.get("d") or "") for b in bars or []]
+        return bool(dates and all(dates) and dates == sorted(set(dates))
+                    and dates[-1] >= cutoff)
+    return (valid(qbars) and valid(rbars)
+            and [b.get("d") for b in qbars] == [b.get("d") for b in rbars])
 
 
 def _fin_vals(row):
@@ -354,22 +492,30 @@ def build():
 
     print("1/4 抓取港股通成分行情 ...", flush=True)
     comps = fetch_components()
-    print("   港股通 %d 只" % len(comps), flush=True)
+    print("   港股通 %d 只（来源：%s）" %
+          (len(comps), COMPONENTS_SOURCE), flush=True)
     if not comps:
         print("成分抓取失败，退出")
         return 1
+    if COMPONENTS_SOURCE == "snapshot-cache":
+        print("   注意：成分缓存日期 %s；将用最新 K 线修正收盘价和涨跌幅" %
+              (COMPONENTS_ASOF or "未知"), flush=True)
 
     print("2/4 抓取K线(并发) ...", flush=True)
     codes = sorted(comps.keys())
     klines = {}
     raws = {}
     full_dates = {}
+    failed_codes = set()
+    old_by_code = {}
     done = [0]
+    latest_cutoff = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
     todo = []          # (code, 已有qfq bars, 已有raw bars, 是否全量, full_date)
     full_interval = 7
     for c in codes:
         ab = rb = None
         af = rf = ""
+        ac = rc = False
         pa = os.path.join(kdir, c + ".json")
         pr = os.path.join(rdir, c + ".json")
         if os.path.exists(pa):
@@ -378,6 +524,9 @@ def build():
                     old = json.load(f)
                 ab = old.get("bars") or []
                 af = old.get("full_date") or ""
+                ac = bool(old.get("coverage_complete")
+                          and old.get("coverage_start")
+                          and old.get("coverage_end"))
             except Exception:  # noqa: BLE001
                 ab = None
         if os.path.exists(pr):
@@ -386,14 +535,18 @@ def build():
                     old = json.load(f)
                 rb = old.get("bars") or []
                 rf = old.get("full_date") or ""
+                rc = bool(old.get("coverage_complete")
+                          and old.get("coverage_start")
+                          and old.get("coverage_end"))
             except Exception:  # noqa: BLE001
                 rb = None
-        cur = (ab and rb and ab[-1].get("d", "") >= today
+        cur = (ac and rc and ab and rb and ab[-1].get("d", "") >= today
                and rb[-1].get("d", "") >= today)
         if cur:
             klines[c], raws[c] = ab, rb
+            full_dates[c] = af or rf or today
             continue
-        need_full = not ab or not rb
+        need_full = not ab or not rb or not ac or not rc
         if not need_full:
             try:
                 last_full = datetime.date.fromisoformat(af or rf or "")
@@ -402,6 +555,7 @@ def build():
             except ValueError:
                 need_full = True
         todo.append((c, ab or [], rb or [], need_full, af or rf or today))
+        old_by_code[c] = (ab or [], rb or [], af or rf or today)
 
     def _pair(item):
         c, ab, rb, need_full, full_date = item
@@ -413,6 +567,8 @@ def build():
         if not need_full and rb:
             rbeg = _shift_days(rb[-1]["d"], -15) or rbeg
         rbars = fetch_hk_kline(c, beg=rbeg, qfq=False)
+        if not _pair_bars_valid(bars, rbars, today):
+            raise RuntimeError("前复权/不复权K线为空、不连续或首尾日期不一致")
         merged = _merge_bars([] if need_full else ab, bars)
         merged_raw = _merge_bars([] if need_full else rb, rbars)
         full = today if need_full else full_date
@@ -424,8 +580,12 @@ def build():
             c = futs[fut]
             try:
                 c2, bars, rbars, full_date = fut.result()
-            except Exception:  # noqa: BLE001
-                c2, bars, rbars, full_date = c, [], [], today
+            except Exception as exc:  # noqa: BLE001
+                c2 = c
+                bars, rbars, full_date = old_by_code.get(c, ([], [], today))
+                failed_codes.add(c)
+                print("   K线失败 %s（保留原文件）：%s" %
+                      (c, str(exc)[:240]), flush=True)
             klines[c2], raws[c2] = bars, rbars
             full_dates[c2] = full_date
             done[0] += 1
@@ -434,18 +594,22 @@ def build():
     # 边抓边写
     with ThreadPoolExecutor(max_workers=16) as ex:
         def _write(c):
+            if c in failed_codes:
+                return
             with open(os.path.join(kdir, c + ".json"), "w", encoding="utf-8") as f:
-                json.dump({"code": c, "name": comps[c].get("f14", ""),
+                bars = klines.get(c, [])
+                payload = {"code": c, "name": comps[c].get("f14", ""),
                            "date": today, "updated": now,
-                           "full_date": full_dates.get(c, today),
-                           "bars": klines.get(c, [])},
-                          f, ensure_ascii=False)
+                           "full_date": full_dates.get(c, today), "bars": bars}
+                payload.update(_coverage_fields(bars, latest_cutoff))
+                json.dump(payload, f, ensure_ascii=False)
             with open(os.path.join(rdir, c + ".json"), "w", encoding="utf-8") as f:
-                json.dump({"code": c, "name": comps[c].get("f14", ""),
+                bars = raws.get(c, [])
+                payload = {"code": c, "name": comps[c].get("f14", ""),
                            "date": today, "updated": now,
-                           "full_date": full_dates.get(c, today),
-                           "bars": raws.get(c, [])},
-                          f, ensure_ascii=False)
+                           "full_date": full_dates.get(c, today), "bars": bars}
+                payload.update(_coverage_fields(bars, latest_cutoff))
+                json.dump(payload, f, ensure_ascii=False)
         list(ex.map(_write, codes))
     print("   K线完成 %d/%d" % (len(codes), len(codes)), flush=True)
 
@@ -466,6 +630,7 @@ def build():
     for c in codes:
         q = comps[c]
         bars = klines.get(c) or []
+        _refresh_cached_quote(q, bars)
         rows = fin.get(c) or []
         annual = [r for r in rows
                   if (r.get("DATE_TYPE_CODE") or "") == "001"]
@@ -547,7 +712,8 @@ def build():
 
     items.sort(key=lambda x: (x.get("dy") is None, -(x.get("dy") or 0)))
     snap = {"date": today, "updated_at": now, "total": len(items),
-            "market": "港股通", "items": items}
+            "market": "港股通", "components_source": COMPONENTS_SOURCE,
+            "components_asof": COMPONENTS_ASOF, "items": items}
     with open(os.path.join(data_root, "snapshot.json"), "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False)
     print("已写 data/hk/snapshot.json | 港股通 %d 只" % len(items), flush=True)

@@ -371,79 +371,92 @@ def _norm_date(s):
     return s
 
 
-def _fetch_kline_tencent(code, beg, end):
-    """腾讯前复权日K线。
+KLINE_SEGMENT_DAYS = 900  # 约 640 个交易日，低于腾讯单次约 1000 根上限
 
-    分段策略（每只2次请求，避免触发限流）：
-      1) 历史段：beg ~ 2023-12-31（接口单次最多约640根，自动截取最近640根）；
-      2) 最近段：count 接口返回最近约640根且包含最新交易日（区间接口会滞后1天，
-         因此最新交易日必须靠 count 接口补）。
-    两段按日期合并，最近段优先（同日期以后者为准）。
-    """
-    if code.startswith(("6", "9", "5")):
-        mkt = "sh"
-    elif code.startswith(("8", "4", "92")):
-        mkt = "bj"
-    else:
-        mkt = "sz"
-    sym = mkt + code
-    bars = []
-    # 增量窗口：按 beg 距今自然日估算需要的根数（每天约1.4根，留裕量）
-    gap_count = 700
+
+def _iter_date_windows(beg, end, chunk_days=KLINE_SEGMENT_DAYS):
+    """按自然日切片，避免腾讯区间接口静默截断较早 K 线。"""
     try:
-        bd = datetime.date.fromisoformat(_norm_date(beg))
-        gap_days = (datetime.date.today() - bd).days
-        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
-    except Exception:  # noqa: BLE001
-        pass
-    # 历史段：仅当 beg 早于 2024 才需要（否则会拉空，纯浪费）
-    if str(beg).replace("-", "") < "20240101":
+        start = datetime.date.fromisoformat(_norm_date(beg))
+        finish = datetime.date.fromisoformat(_norm_date(end))
+    except (TypeError, ValueError):
+        return
+    finish = min(finish, datetime.date.today())
+    while start <= finish:
+        stop = min(start + datetime.timedelta(days=chunk_days - 1), finish)
+        yield start.strftime("%Y-%m-%d"), stop.strftime("%Y-%m-%d")
+        start = stop + datetime.timedelta(days=1)
+
+
+def _fetch_tencent_segments(sym, beg, end, qfq):
+    """腾讯日K分段抓取并去重；qfq=True时优先读取qfqday。"""
+    end = end or datetime.date.today().strftime("%Y%m%d")
+    adj = "qfq" if qfq else ""
+    key = "qfqday" if qfq else "day"
+    bars = []
+    failures = []
+    for beg_d, end_d in _iter_date_windows(beg, end):
         try:
             j = fetch_json(
                 "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-                params={"param": "%s,day,%s,2023-12-31,1000,qfq"
-                        % (sym, _norm_date(beg))},
+                params={"param": "%s,day,%s,%s,1000,%s" %
+                        (sym, beg_d, end_d, adj)},
                 referer="https://gu.qq.com/", timeout=15,
                 retries=2, delay=1.0)
-            d = (j.get("data") or {}).get(sym) or {}
-            rows = d.get("qfqday") or d.get("day") or []
+            data = (j.get("data") or {}).get(sym) or {}
+            rows = data.get(key) or (data.get("day") if qfq else []) or []
             for row in rows:
                 if len(row) < 6:
                     continue
                 try:
                     bars.append({
                         "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                        "h": float(row[3]), "l": float(row[4]),
-                        "v": float(row[5])})
-                except ValueError:
+                        "h": float(row[3]), "l": float(row[4]), "v": float(row[5])})
+                except (TypeError, ValueError):
                     continue
-        except Exception:  # noqa: BLE001
-            pass
-    # 最近段：count 接口返回最近 N 根且含最新交易日
+        except Exception as exc:  # noqa: BLE001
+            failures.append("%s~%s: %s" % (beg_d, end_d, str(exc)[:160]))
+    if failures:
+        raise RuntimeError("腾讯日K分段失败（%s）" % "；".join(failures[:5]))
+    # 区间接口偶发滞后，补抓最近一段；最终仍按日期去重。
+    try:
+        start = datetime.date.fromisoformat(_norm_date(beg))
+        gap_days = (datetime.date.today() - start).days
+        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
+    except (TypeError, ValueError):
+        gap_count = 700
     try:
         j2 = fetch_json(
             "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,,,%d,qfq" % (sym, gap_count)},
+            params={"param": "%s,day,,,%d,%s" % (sym, gap_count, adj)},
             referer="https://gu.qq.com/", timeout=15,
             retries=2, delay=1.0)
-        d2 = (j2.get("data") or {}).get(sym) or {}
-        rows2 = d2.get("qfqday") or d2.get("day") or []
+        data2 = (j2.get("data") or {}).get(sym) or {}
+        rows2 = data2.get(key) or (data2.get("day") if qfq else []) or []
         for row in rows2:
             if len(row) < 6:
                 continue
             try:
                 bars.append({
                     "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                    "h": float(row[3]), "l": float(row[4]),
-                    "v": float(row[5])})
-            except ValueError:
+                    "h": float(row[3]), "l": float(row[4]), "v": float(row[5])})
+            except (TypeError, ValueError):
                 continue
-    except Exception:  # noqa: BLE001
-        pass
-    by_date = {}
-    for b in bars:
-        by_date[b["d"]] = b  # 同日期保留后出现（最近8根优先）
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("腾讯日K最近段失败: %s" % str(exc)[:240]) from exc
+    by_date = {b["d"]: b for b in bars}
     return [by_date[d] for d in sorted(by_date)]
+
+
+def _fetch_kline_tencent(code, beg, end):
+    """腾讯前复权日K线：安全日期分段 + 最近段补抓 + 日期去重。"""
+    if code.startswith(("6", "9", "5")):
+        mkt = "sh"
+    elif code.startswith(("8", "4", "92")):
+        mkt = "bj"
+    else:
+        mkt = "sz"
+    return _fetch_tencent_segments(mkt + code, beg, end, True)
 
 
 def _shift_date(s, days):
@@ -525,7 +538,7 @@ def _em_note(ok):
         _em_fail_streak = _em_fail_streak + 1 if not ok else 0
 
 
-def fetch_kline(code, beg="20200101", end="20500101", min_date=None):
+def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
     """前复权日K线 -> (name, [dict(d,o,h,l,c,v), ...])。
     优先东方财富，连续失败自动切换腾讯备用源。
     min_date: 期望覆盖到的最新日期；若返回数据未覆盖则视为陈旧，切换到备用源。"""
@@ -544,69 +557,17 @@ def fetch_kline(code, beg="20200101", end="20500101", min_date=None):
 
 
 def _fetch_kline_tencent_raw(code, beg, end):
-    """腾讯不复权日K线（fq 参数留空 -> day 数组，分历史段+最近段两段）。"""
+    """腾讯不复权日K线：安全日期分段 + 最近段补抓 + 日期去重。"""
     if code.startswith(("6", "9", "5")):
         mkt = "sh"
     elif code.startswith(("8", "4", "92")):
         mkt = "bj"
     else:
         mkt = "sz"
-    sym = mkt + code
-    bars = []
-    gap_count = 700
-    try:
-        bd = datetime.date.fromisoformat(_norm_date(beg))
-        gap_days = (datetime.date.today() - bd).days
-        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
-    except Exception:  # noqa: BLE001
-        pass
-    if str(beg).replace("-", "") < "20240101":
-        try:
-            j = fetch_json(
-                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-                params={"param": "%s,day,%s,2023-12-31,1000,"
-                        % (sym, _norm_date(beg))},
-                referer="https://gu.qq.com/", timeout=15,
-                retries=2, delay=1.0)
-            rows = ((j.get("data") or {}).get(sym) or {}).get("day") or []
-            for row in rows:
-                if len(row) < 6:
-                    continue
-                try:
-                    bars.append({
-                        "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                        "h": float(row[3]), "l": float(row[4]),
-                        "v": float(row[5])})
-                except ValueError:
-                    continue
-        except Exception:  # noqa: BLE001
-            pass
-    try:
-        j2 = fetch_json(
-            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,,,%d," % (sym, gap_count)},
-            referer="https://gu.qq.com/", timeout=15,
-            retries=2, delay=1.0)
-        rows2 = ((j2.get("data") or {}).get(sym) or {}).get("day") or []
-        for row in rows2:
-            if len(row) < 6:
-                continue
-            try:
-                bars.append({
-                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                    "h": float(row[3]), "l": float(row[4]),
-                    "v": float(row[5])})
-            except ValueError:
-                continue
-    except Exception:  # noqa: BLE001
-        pass
-    by_date = {}
-    for b in bars:
-        by_date[b["d"]] = b
-    return [by_date[d] for d in sorted(by_date)]
+    return _fetch_tencent_segments(mkt + code, beg, end, False)
 
 
-def fetch_kline_raw(code, beg="20200101", end="20500101", min_date=None):
+def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
     """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day。"""
     if not _em_blocked():
         markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]

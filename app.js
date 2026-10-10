@@ -17,6 +17,7 @@ const state = {
   funds: [], fundSort: { k: "scale_now", asc: false },
   fundSearch: "", view: "list", fundCurrent: null, fundChart: null,
   cbonds: { listed: [], pending: [] },
+  dmaLow30: null,
   hkStocks: [], hkSnap: null, hkPy: null, hkLoaded: false,
   hkSort: { k: "dy", asc: false }, hkSearch: "",
   hkChart: null, hkK: null, hkRaw: null, hkDivs: null,
@@ -37,6 +38,13 @@ const state = {
 const fmt = (v, d = 2) =>
   v === null || v === undefined || isNaN(v) ? "—" : Number(v).toFixed(d);
 
+// 与 config.json 保持一致；前端兜底过滤，避免旧快照或独立排名数据漏出目标代码。
+const EXCLUDED_CODE_PREFIXES = ["300", "688"];
+function isExcludedCode(code) {
+  const value = code === null || code === undefined ? "" : String(code).trim();
+  return EXCLUDED_CODE_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
 // 股票/基金名称的拼音首字母（如 “长江电力” -> “cjdl”），供搜索用
 function initials(name) {
   try {
@@ -52,26 +60,35 @@ function initials(name) {
 
 async function load() {
   try {
-    const [snap, b, fnd, cbd, ins] = await Promise.all([
+    const [snap, b, fnd, cbd, ins, dma] = await Promise.all([
       fetch("data/snapshot.json").then((r) => r.json()),
       fetch("data/meta/boards.json").then((r) => r.json()),
       fetch("data/funds.json").then((r) => r.json()).catch(() => null),
       fetch("data/cbonds.json").then((r) => r.json()).catch(() => null),
       fetch("data/meta/insider_buys.json").then((r) => r.json()).catch(() => null),
+      fetch("data/meta/dma_low30.json").then((r) => r.json()).catch(() => null),
     ]);
-    state.snapshot = snap;
-    state.stocks = snap.items || [];
+    const snapshotItems = Array.isArray(snap.items)
+      ? snap.items.filter((s) => !isExcludedCode(s && s.code)) : [];
+    state.snapshot = Object.assign({}, snap, {
+      total: snapshotItems.length, items: snapshotItems,
+    });
+    state.stocks = snapshotItems;
     state.boards = (b && b.boards) || [];
     state.funds = (fnd && fnd.items) || [];
     state.cbonds = (cbd && cbd.listed) ? cbd : { listed: [], pending: [] };
-    state.insiders = (ins && ins.items) || [];
+    state.insiders = ins && Array.isArray(ins.items)
+      ? ins.items.filter((x) => !isExcludedCode(x && x.code)) : [];
+    state.dmaLow30 = dma && Array.isArray(dma.items) ? Object.assign({}, dma, {
+      items: dma.items.filter((x) => !isExcludedCode(x && x.code)),
+    }) : null;
     state.pyMap = new Map();
     state.stocks.forEach((s) => state.pyMap.set(s.code, initials(s.name || "")));
     state.watch = loadWatch();
     const cbTotal = state.cbonds.listed.length + state.cbonds.pending.length;
     $("#meta").textContent =
       "数据日期 " + snap.date + " · 更新于(北京) " + toBJ(snap.updated_at) +
-      " · 股票 " + snap.total + " 只" +
+      " · 股票 " + state.stocks.length + " 只" +
       (state.funds.length ? " · 基金 " + state.funds.length + " 只" : "") +
       (cbTotal ? " · 转债 " + cbTotal + " 只" : "");
     route();
@@ -247,6 +264,16 @@ async function openDetail(code) {
   state.k = k;
   state.h = h;
   state.raw = rw;
+  const lastBarDate = (payload) => payload && Array.isArray(payload.bars) && payload.bars.length
+    ? payload.bars[payload.bars.length - 1].d : "—";
+  let cacheNote = document.querySelector("#merged-kline-date");
+  if (!cacheNote) {
+    cacheNote = document.createElement("div");
+    cacheNote.id = "merged-kline-date";
+    cacheNote.className = "muted";
+    document.querySelector("#chart").before(cacheNote);
+  }
+  cacheNote.textContent = "K线数据截至：前复权 " + lastBarDate(k) + " · 未复权 " + lastBarDate(rw);
   state.divs = Array.isArray(dv)
     ? dv.reduce((m, x) => { m[x.ex_date] = x; return m; }, {})
     : null;
@@ -1257,7 +1284,7 @@ async function loadSocial() {
 }
 
 function socialFiltered(dir) {
-  let list = (state.social.items || []).filter((x) => x.direction === dir);
+  let list = (state.social.items || []).filter((x) => !isExcludedCode(x.code) && x.direction === dir);
   const q = state.socialSearch.trim().toLowerCase();
   if (q) {
     list = list.filter(
@@ -1394,7 +1421,7 @@ async function loadSoe() {
 }
 
 function soeFiltered() {
-  let list = state.soe.items || [];
+  let list = (state.soe.items || []).filter((x) => !isExcludedCode(x.code));
   if (state.soeCat !== "all") {
     list = list.filter((x) => x.category === state.soeCat);
   }
@@ -1546,7 +1573,7 @@ function renderWatchlist() {
   }
   // 按添加时间倒序（后加的在前）+ 搜索过滤（代码/名称/备忘）
   const q = (state.watchSearch || "").trim().toLowerCase();
-  let list = state.watch.slice().sort((a, b) =>
+  let list = state.watch.filter((w) => !isExcludedCode(w.code)).sort((a, b) =>
     (b.added_at || "").localeCompare(a.added_at || ""));
   if (q) {
     list = list.filter((w) => {
@@ -1716,6 +1743,19 @@ function renderRankings() {
   // 连续跌破布林下轨（≥3天，右侧显示连续跌破天数，多的在前）
   const boll3 = all.filter((s) => (s.boll_days || 0) >= 3)
     .sort((a, b) => (b.boll_days || 0) - (a.boll_days || 0)).slice(0, 10);
+  const dmaPercentile = (x) => {
+    const value = x.percentile ?? x.dma_white_percentile ?? x.current_percentile;
+    return value == null || isNaN(value) ? null : Number(value);
+  };
+  const dmaRows = state.dmaLow30 && Array.isArray(state.dmaLow30.items)
+    ? state.dmaLow30.items.filter((x) => !isExcludedCode(x && x.code)).slice().sort((a, b) => {
+      const ap = dmaPercentile(a);
+      const bp = dmaPercentile(b);
+      if (ap == null && bp == null) return String(a.code || "").localeCompare(String(b.code || ""));
+      if (ap == null) return 1;
+      if (bp == null) return -1;
+      return ap - bp || String(a.code || "").localeCompare(String(b.code || ""));
+    }) : [];
   const block = (title, rows, key, emptyText, plain) => {
     if (!rows.length) {
       if (!emptyText) return "";
@@ -1732,15 +1772,50 @@ function renderRankings() {
     }).join("");
     return `<div class="rank-block"><div class="rank-title">${title}</div><ol class="rank-list">${items}</ol></div>`;
   };
+  const dmaTable = (rows) => {
+    const payloadMissing = !state.dmaLow30;
+    const title = "DMA(5,89,36) · 白线历史最低30% · 数据日期 " + esc(state.dmaLow30?.date || "—");
+    const count = rows.length ? `<span class="rank-dma-count">${rows.length} 只</span>` : "";
+    let body = "";
+    if (payloadMissing) {
+      body = '<div class="rank-dma-empty">DMA数据暂不可用</div>';
+    } else if (!rows.length) {
+      body = '<div class="rank-dma-empty">当前没有满足条件的股票</div>';
+    } else {
+      const smap = new Map(all.map((s) => [s.code, s]));
+      body = `<div class="rank-dma-scroll"><table class="rank-dma-table">` +
+        `<thead><tr><th>名称(代码)</th><th class="num">白线(DIF)</th>` +
+        `<th class="num">历史30%分位</th><th class="num">当前分位数</th>` +
+        `<th class="num">样本数</th></tr></thead><tbody>` +
+        rows.map((x) => {
+          const code = String(x.code || "");
+          const stock = smap.get(code) || {};
+          const name = x.name || stock.name || code || "—";
+          const white = x.white ?? x.dma_white;
+          const threshold = x.threshold ?? x.dma_white_p30;
+          const currentPct = dmaPercentile(x);
+          const currentPctText = currentPct == null ? "—" : fmt(currentPct, 1) + "%";
+          const samples = x.samples ?? x.dma_samples;
+          return `<tr data-code="${esc(code)}"><td class="dma-name">${esc(name)}(${esc(code)})</td>` +
+            `<td class="num">${fmt(white, 4)}</td><td class="num">${fmt(threshold, 4)}</td>` +
+            `<td class="num">${currentPctText}</td><td class="num">${fmt(samples, 0)}</td></tr>`;
+        }).join("") + `</tbody></table></div>`;
+    }
+    return `<div class="rank-block rank-dma"><div class="rank-title"><span>${title}</span>${count}</div>${body}</div>`;
+  };
+  const bollDmaSide = `<div class="rank-side">` +
+    block("连续3天跌破布林下轨", boll3, "boll_days", "今日暂无满足条件的股票", true) +
+    dmaTable(dmaRows) + `</div>`;
   box.innerHTML = block("银行股息率 Top10", banks, "dy") +
     block("连续分红≥5年 · 近1月涨幅 Top10", up, "pct_1m") +
     block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m") +
     block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +
     block("连续7天阴线", yin7, "pct_7d", "今日暂无满足条件的股票") +
-    block("连续7天阳线", yang7, "pct_7d", "今日暂无满足条件的股票") +
-    block("连续3天跌破布林下轨", boll3, "boll_days", "今日暂无满足条件的股票", true);
+    block("连续7天阳线", yang7, "pct_7d", "今日暂无满足条件的股票") + bollDmaSide;
   box.querySelectorAll(".rc").forEach((el) =>
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
+  box.querySelectorAll(".rank-dma-table tbody tr").forEach((tr) =>
+    tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; }));
 }
 
 // 近1年高管增持排名：最近增持的排在最前（全宽表格）
@@ -1749,7 +1824,7 @@ function renderInsiderRank() {
   if (!box) return;
   const tbody = box.querySelector("tbody");
   if (!tbody) { box.hidden = true; return; }
-  const list = state.insiders || [];
+  const list = (state.insiders || []).filter((x) => !isExcludedCode(x && x.code));
   if (!list.length) { box.hidden = true; return; }
   box.hidden = false;
   const per = 15;

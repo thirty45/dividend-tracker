@@ -48,6 +48,14 @@ def main():
 
     watch = load_watchlist()
     stocks = watch["stocks"]
+    exclude_prefixes = tuple(str(p) for p in cfg.get("exclude_code_prefixes", [])
+                             if str(p))
+    if exclude_prefixes:
+        before = len(stocks)
+        stocks = [s for s in stocks
+                  if not str(s.get("code") or "").startswith(exclude_prefixes)]
+        print("按代码前缀 %s 防御性剔除 %d 只" %
+              (", ".join(exclude_prefixes), before - len(stocks)))
     if args.limit:
         stocks = stocks[:args.limit]
     name_map = {s["code"]: s["name"] for s in stocks}

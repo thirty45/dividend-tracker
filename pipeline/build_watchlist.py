@@ -140,6 +140,18 @@ def main():
             "funds": set(), "max_pct": 0.0, "periods": 0})
         st.setdefault("indices", []).append("高股息")
 
+    # 代码前缀排除必须放在所有来源合并后、分红/K线等昂贵质量过滤前。
+    exclude_prefixes = tuple(str(p) for p in cfg.get("exclude_code_prefixes", [])
+                             if str(p))
+    removed_prefix = []
+    if exclude_prefixes:
+        for code in list(stocks):
+            if str(code).startswith(exclude_prefixes):
+                removed_prefix.append(code)
+                del stocks[code]
+    print("   按代码前缀 %s 剔除 %d 只" %
+          (", ".join(exclude_prefixes) or "无", len(removed_prefix)))
+
     print("5/5 剔除分红/退市不合格股票 ...")
     n_dy = cfg.get("dividend_years", 3)
     today = datetime.date.today()
@@ -181,16 +193,23 @@ def main():
 
     def _raw_one(c):
         try:
-            bars = sm.fetch_kline_raw(c, "20200101", "20500101")
+            bars = sm.fetch_kline_raw(c, cfg.get("kline_start", "19900101"),
+                                      "20500101")
         except Exception:  # noqa: BLE001
             bars = []
         if bars:
+            coverage_start = bars[0].get("d") or ""
+            coverage_end = bars[-1].get("d") or ""
             with open(os.path.join(raw_dir, c + ".json"), "w",
                       encoding="utf-8") as f:
                 json.dump({"code": c, "name": "",
                            "date": bars[-1]["d"],
                            "updated": datetime.datetime.now().isoformat(
                                timespec="seconds"),
+                           "full_date": datetime.date.today().isoformat(),
+                           "coverage_start": coverage_start,
+                           "coverage_end": coverage_end,
+                           "coverage_complete": bool(coverage_start and coverage_end),
                            "bars": bars}, f, ensure_ascii=False)
         return c, bars
 
