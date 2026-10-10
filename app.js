@@ -927,6 +927,10 @@ function renderHkList() {
   tbody.innerHTML = list.map(hkRowHTML).join("");
   const info = [`显示 ${list.length} / ${state.hkStocks.length} 只`];
   if (state.hkSearch.trim()) info.push("搜索：" + state.hkSearch.trim());
+  info.push("数据生成 " + (state.hkSnap?.date || "—"));
+  if (state.hkSnap?.components_source === "snapshot-cache") {
+    info.push("成分及估值沿用 " + (state.hkSnap.components_asof || "—") + " 缓存；收盘价按可用K线更新");
+  }
   const el = $("#hk-info");
   if (el) el.textContent = info.join(" · ");
   tbody.querySelectorAll("tr").forEach((tr) =>
@@ -2030,9 +2034,9 @@ function renderCbonds() {
   if (l) l.innerHTML = c.listed.filter(hit).map(cbRowHTML).join("");
   const pi = document.getElementById("cb-pending-info");
   const li = document.getElementById("cb-listed-info");
-  if (pi) pi.textContent = "已过会 · 未上市（含待申购 / 待上市）共 " + c.pending.length + " 只" +
+  if (pi) pi.textContent = "数据日期 " + (c.date || "—") + " · 已过会 · 未上市（含待申购 / 待上市）共 " + c.pending.length + " 只" +
     (q ? " · 命中 " + c.pending.filter(hit).length + " 只" : "") + "，按申购日期倒序";
-  if (li) li.textContent = "已上市 共 " + c.listed.length + " 只" +
+  if (li) li.textContent = "数据日期 " + (c.date || "—") + " · 已上市 共 " + c.listed.length + " 只" +
     (q ? " · 命中 " + c.listed.filter(hit).length + " 只" : "") + "，按上市日期倒序";
 }
 
