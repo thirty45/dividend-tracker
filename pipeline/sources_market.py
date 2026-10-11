@@ -228,18 +228,20 @@ def fetch_dividends_by_year(start_date, end_date, page_size=500):
     return out
 
 
+def _tencent_market(code):
+    # 92xxxx belongs to Beijing; check it before the broader Shanghai 9 prefix.
+    if code.startswith(("8", "4", "92")):
+        return "bj"
+    return "sh" if code.startswith(("6", "9", "5")) else "sz"
+
+
 def probe_latest_bar_date(code):
     """腾讯快速探针：返回某只股票最近一根日K线的日期（YYYY-MM-DD）。
 
     用于判断“K线是否已更新到新的交易日”。东财估值数据可能晚于K线发布，
     因此以K线探针为准决定是否刷新K线文件。
     """
-    if code.startswith(("6", "9", "5")):
-        mkt = "sh"
-    elif code.startswith(("8", "4", "92")):
-        mkt = "bj"
-    else:
-        mkt = "sz"
+    mkt = _tencent_market(code)
     sym = mkt + code
     try:
         j = fetch_json(
@@ -433,7 +435,7 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
 
 def fetch_kline_recent(code, qfq=True):
     """仅取近期700根日K；调用方必须标记早期历史待补，不冒充完整历史。"""
-    mkt = "sh" if code.startswith(("6", "9", "5")) else ("bj" if code.startswith(("8", "4", "92")) else "sz")
+    mkt = _tencent_market(code)
     sym = mkt + code
     j = fetch_json(
         "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
@@ -457,12 +459,7 @@ def fetch_kline_recent(code, qfq=True):
 
 def _fetch_kline_tencent(code, beg, end):
     """腾讯前复权日K线：安全日期分段 + 最近段补抓 + 日期去重。"""
-    if code.startswith(("6", "9", "5")):
-        mkt = "sh"
-    elif code.startswith(("8", "4", "92")):
-        mkt = "bj"
-    else:
-        mkt = "sz"
+    mkt = _tencent_market(code)
     return _fetch_tencent_segments(mkt + code, beg, end, True)
 
 
@@ -510,7 +507,7 @@ def fetch_raw_ex_open(code, ex_date):
                 continue
         _em_note(False)
     # 2) 腾讯不复权 fqkline（fq 参数留空 = 不复权，返回 day 数组）
-    mkt = "sh" if code.startswith(("6", "9", "5")) else "sz"
+    mkt = _tencent_market(code)
     try:
         j = fetch_json(
             "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
@@ -565,12 +562,7 @@ def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
 
 def _fetch_kline_tencent_raw(code, beg, end):
     """腾讯不复权日K线：安全日期分段 + 最近段补抓 + 日期去重。"""
-    if code.startswith(("6", "9", "5")):
-        mkt = "sh"
-    elif code.startswith(("8", "4", "92")):
-        mkt = "bj"
-    else:
-        mkt = "sz"
+    mkt = _tencent_market(code)
     return _fetch_tencent_segments(mkt + code, beg, end, False)
 
 
