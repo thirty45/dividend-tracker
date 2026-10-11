@@ -29,7 +29,10 @@ def valid_bars(bars):
             o, c, h, l, v = (float(b[k]) for k in ('o', 'c', 'h', 'l', 'v'))
             if not all(math.isfinite(x) for x in (o, c, h, l, v)):
                 return False
-            if h < max(o, c, l) or l > min(o, c, h) or v < 0:
+            # Providers round adjusted OHLC independently. Allow one A-share
+            # price tick (0.01 RMB), retain the exact prices, reject larger errors.
+            tick_tolerance = 0.010001
+            if h < max(o, c, l) - tick_tolerance or l > min(o, c, h) + tick_tolerance or v < 0:
                 return False
         return True
     except (KeyError, TypeError, ValueError, OverflowError):
