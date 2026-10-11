@@ -150,6 +150,16 @@ def write_report(data, report):
             % (report['usable_series'], report['expected_series'], len(report['missing']),
                len(report['stale']), len(report['partial_history'])))
     print(line, flush=True)
+    if os.environ.get('GITHUB_ACTIONS'):
+        print('::notice title=Kline coverage::' + line, flush=True)
+        for key in report['missing']:
+            code, mode = key.split(':')
+            folder = 'kline' if mode == 'qfq' else 'kline_raw'
+            errors = [e for r in report.get('repairs', [])
+                      if r.get('code') == code and r.get('mode') == folder
+                      for e in r.get('errors', [])]
+            detail = (key + ' ' + ' | '.join(errors)).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print('::error title=Missing Kline::' + detail, flush=True)
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
         with open(summary, 'a', encoding='utf-8') as f:
