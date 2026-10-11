@@ -6,7 +6,6 @@ joined to old adjusted prices from a different adjustment basis.
 import argparse
 import datetime
 import json
-import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,36 +14,9 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 from pipeline import sources_market as sm
+from pipeline.kline import valid_bars, read_series
 
 
-def valid_bars(bars):
-    if not isinstance(bars, list) or not bars:
-        return False
-    try:
-        dates = [b['d'] for b in bars]
-        if dates != sorted(set(dates)):
-            return False
-        for b in bars:
-            datetime.date.fromisoformat(b['d'])
-            o, c, h, l, v = (float(b[k]) for k in ('o', 'c', 'h', 'l', 'v'))
-            if not all(math.isfinite(x) for x in (o, c, h, l, v)):
-                return False
-            # Providers round adjusted OHLC independently. Allow one A-share
-            # price tick (0.01 RMB), retain the exact prices, reject larger errors.
-            tick_tolerance = 0.010001
-            if h < max(o, c, l) - tick_tolerance or l > min(o, c, h) + tick_tolerance or v < 0:
-                return False
-        return True
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return False
-
-
-def read_series(path):
-    try:
-        p = json.loads(path.read_text(encoding='utf-8'))
-        return p if isinstance(p, dict) and valid_bars(p.get('bars')) else None
-    except (OSError, ValueError, TypeError):
-        return None
 
 
 def universe(data, cfg):

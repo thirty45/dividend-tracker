@@ -16,12 +16,29 @@ import json
 import os
 import re
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pipeline.net import fetch  # noqa: E402
 from pipeline import sources_funds as sf  # noqa: E402
+
+NAV_TZ = datetime.timezone(datetime.timedelta(hours=8))
+_INDEX_VAL_LOCK = threading.Lock()
+_INDEX_VAL_CACHE = {}
+
+
+def _today_bj():
+    return datetime.datetime.now(NAV_TZ).date()
+
+
+def _nav_date(timestamp_ms):
+    return datetime.datetime.fromtimestamp(timestamp_ms / 1000, NAV_TZ).strftime("%Y-%m-%d")
+
+
+def _date_ms(date):
+    return int(datetime.datetime.combine(date, datetime.time(), tzinfo=NAV_TZ).timestamp() * 1000)
+
 
 # ---------------------------------------------------------------------------
 # 指数映射 / 宽基关键词 / 排除词：优先读 config.json，缺失时回退到下列默认值。
@@ -161,9 +178,9 @@ def parse_pingzhong(code):
 def pct_from_nav(nav, months):
     if not nav:
         return None
-    today = datetime.date.today()
+    today = _today_bj()
     target = today - datetime.timedelta(days=int(months * 30.44))
-    tg_ms = int(time.mktime(target.timetuple()) * 1000)
+    tg_ms = _date_ms(target)
     past = [p for p in nav if p.get("x", 0) <= tg_ms]
     if not past:
         return None
@@ -175,8 +192,8 @@ def pct_from_nav(nav, months):
 
 def dividend_stats(nav):
     """近12个月分红：次数 + 累计每份分红（元）。"""
-    today = datetime.date.today()
-    cutoff = int(time.mktime((today - datetime.timedelta(days=365)).timetuple()) * 1000)
+    today = _today_bj()
+    cutoff = _date_ms(today - datetime.timedelta(days=365))
     cnt, total = 0, 0.0
     for p in nav:
         um = p.get("unitMoney")
@@ -193,7 +210,7 @@ def scale_at(scale, months):
     """返回截至 (今天 - N 月) 之前最近一次披露的规模点，或 None。"""
     if not scale:
         return None
-    today = datetime.date.today()
+    today = _today_bj()
     target = today - datetime.timedelta(days=int(months * 30.44))
     tg = target.strftime("%Y-%m-%d")
     cand = [s for s in scale if s["date"] <= tg]
@@ -251,12 +268,21 @@ def parse_index_val(html):
 
 
 def fetch_index_val(index_code):
-    try:
-        html = fetch(LEGULEGU_URL.format(code=index_code), timeout=20, retries=2, delay=0.5)
-        return parse_index_val(html)
-    except Exception:  # noqa: BLE001
-        return {"pe": None, "pb": None, "dy": None}
-
+    # Many funds track one index. Share exactly one request per index per build.
+    with _INDEX_VAL_LOCK:
+        future = _INDEX_VAL_CACHE.get(index_code)
+        owner = future is None
+        if owner:
+            future = Future()
+            _INDEX_VAL_CACHE[index_code] = future
+    if owner:
+        try:
+            html = fetch(LEGULEGU_URL.format(code=index_code), timeout=20, retries=2, delay=0.5)
+            value = parse_index_val(html)
+        except Exception:
+            value = {"pe": None, "pb": None, "dy": None}
+        future.set_result(value)
+    return dict(future.result())
 
 # ---------------------------------------------------------------------------
 # 单只基金指标汇总
@@ -268,21 +294,22 @@ def compute_one(item):
     except Exception as exc:  # noqa: BLE001
         return {"code": code, "name": name, "type": ftype_tag,
                 "error": "净值/规模抓取失败: %s" % exc}
-    scale_now = scale[-1]["y"] if scale else None
+    if not nav or not scale:
+        return {"code": code, "name": name, "type": ftype_tag, "error": "净值或规模数据为空"}
+    scale_now = scale[-1]["y"]
     idx_code, idx_name = detect_index(name)
     val = fetch_index_val(idx_code) if idx_code else {"pe": None, "pb": None, "dy": None}
     div_cnt, div_sum = dividend_stats(nav)
     last_nav = nav[-1]["y"] if nav else None
     div_ratio = round(div_sum / last_nav * 100, 2) if (div_sum and last_nav) else None
     # 当天涨跌幅：最新净值 vs 上一净值
-    nav_date = None
+    nav_date = _nav_date(nav[-1]["x"]) if nav else None
     chg_today = None
     if len(nav) >= 2:
         y0, y1 = nav[-2].get("y"), nav[-1].get("y")
         if y0 and y1:
             chg_today = round((y1 / y0 - 1) * 100, 2)
-        nav_date = datetime.datetime.fromtimestamp(
-            nav[-1].get("x", 0) / 1000).strftime("%Y-%m-%d")
+
     rec = {
         "code": code,
         "name": name,
@@ -307,7 +334,7 @@ def compute_one(item):
     # 净值走势（最近 NAV_KEEP 个交易日）
     if nav:
         rec["_nav"] = [[
-            datetime.datetime.fromtimestamp(p["x"] / 1000).strftime("%Y-%m-%d"),
+            _nav_date(p["x"]),
             round(p["y"], 4),
         ] for p in nav[-NAV_KEEP:]]
     return rec
@@ -336,40 +363,70 @@ def dedup_broad(items):
 
 def build_funds(limit=None, workers=6, data_dir="data", progress=None):
     items = build_universe(limit=limit)
+    if not items:
+        raise RuntimeError("基金池为空，保留原快照")
+    with _INDEX_VAL_LOCK:
+        _INDEX_VAL_CACHE.clear()
+    path = os.path.join(data_dir, "funds.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = json.load(f)
+        previous = {x["code"]: x for x in old.get("items", [])}
+    except (OSError, ValueError, KeyError, TypeError):
+        previous = {}
     if progress:
         progress("基金池：%d 只（红利+宽基）" % len(items))
-    out_items = []
+    out_items, failures, preserved = [], {}, []
+    successes = 0
     nav_dir = os.path.join(data_dir, "fund_nav")
     os.makedirs(nav_dir, exist_ok=True)
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(compute_one, it): it for it in items}
-        done = 0
-        for fut in as_completed(futs):
-            rec = fut.result()
-            done += 1
+        futures = {ex.submit(compute_one, it): it for it in items}
+        for done, future in enumerate(as_completed(futures), 1):
+            item = futures[future]
+            try:
+                rec = future.result()
+            except Exception as exc:
+                rec = {"code": item[0], "error": str(exc)}
+            if rec.get("error"):
+                failures[item[0]] = rec["error"]
+                if item[0] in previous:
+                    rec = dict(previous[item[0]], refresh_error=rec["error"])
+                    preserved.append(item[0])
+                else:
+                    continue
+            else:
+                successes += 1
             if rec.get("_nav"):
-                with open(os.path.join(nav_dir, rec["code"] + ".json"),
-                          "w", encoding="utf-8") as f:
-                    json.dump({"code": rec["code"], "name": rec["name"],
-                               "nav": rec.pop("_nav")}, f, ensure_ascii=False)
+                with open(os.path.join(nav_dir, rec["code"] + ".json"), "w", encoding="utf-8") as f:
+                    json.dump({"code": rec["code"], "name": rec["name"], "nav": rec.pop("_nav")},
+                              f, ensure_ascii=False, allow_nan=False)
             out_items.append(rec)
             if progress and done % 25 == 0:
                 progress("基金进度 %d/%d" % (done, len(items)))
+    if not successes:
+        raise RuntimeError("基金数据全部抓取失败，保留原快照（%d 只失败）" % len(failures))
+    if limit:
+        # A debugging limit must not erase funds outside the selected sample.
+        processed = {it[0] for it in items}
+        out_items.extend(x for code, x in previous.items() if code not in processed)
     out_items = [it for it in out_items if (it.get("scale_now") or 0) >= 0.5]
     out_items = dedup_broad(out_items)
     out_items.sort(key=lambda x: (x.get("type") != "红利", x["code"]))
+    if not out_items:
+        raise RuntimeError("基金筛选后为空，保留原快照")
     payload = {
-        "date": datetime.date.today().isoformat(),
-        "updated_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "total": len(out_items),
-        "items": out_items,
+        "date": _today_bj().isoformat(),
+        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "total": len(out_items), "items": out_items,
+        "refresh_failures": failures, "preserved_codes": sorted(preserved),
     }
-    with open(os.path.join(data_dir, "funds.json"), "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, allow_nan=False)
     if progress:
-        progress("已写出 data/funds.json（%d 只）" % len(out_items))
+        progress("基金已写出：%d 只；失败 %d 只，沿用旧数据 %d 只" %
+                 (len(out_items), len(failures), len(preserved)))
     return payload
-
 
 def main():
     ap = argparse.ArgumentParser(description="构建红利/宽基指数基金列表与指标")

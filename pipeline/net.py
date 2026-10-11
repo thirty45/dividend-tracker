@@ -21,6 +21,8 @@ class FetchError(RuntimeError):
 def fetch(url, params=None, headers=None, referer=None, timeout=20,
           retries=3, delay=1.0, encoding=None):
     """GET 请求，返回文本。失败自动重试。"""
+    if retries < 1:
+        raise ValueError("retries must be at least 1")
     if params:
         sep = "&" if "?" in url else "?"
         url = url + sep + urllib.parse.urlencode(params)
@@ -49,7 +51,7 @@ def fetch(url, params=None, headers=None, referer=None, timeout=20,
                 return raw.decode("gbk", errors="replace")
         except HTTPError as he:
             last_err = he
-            if he.code in (400, 404, 501):
+            if he.code in (400, 404, 501) or attempt + 1 == retries:
                 break
             if he.code == 514:
                 # 频率限制：多等一会儿再试
@@ -58,8 +60,9 @@ def fetch(url, params=None, headers=None, referer=None, timeout=20,
                 time.sleep(delay * (attempt + 1) + 0.3)
         except Exception as exc:  # noqa: BLE001
             last_err = exc
-            time.sleep(delay * (attempt + 1) + 0.3)
-    raise FetchError("请求失败(%d次): %s -> %r" % (retries, url, last_err))
+            if attempt + 1 < retries:
+                time.sleep(delay * (attempt + 1) + 0.3)
+    raise FetchError("请求失败(%d次): %s -> %r" % (attempt + 1, url, last_err))
 
 
 def fetch_json(url, params=None, headers=None, referer=None, timeout=20,

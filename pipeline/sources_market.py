@@ -6,6 +6,7 @@ import re
 import threading
 
 from .net import fetch, fetch_json
+from .kline import valid_bars
 
 DC_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 DC_WEB_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -483,7 +484,7 @@ def fetch_raw_ex_open(code, ex_date):
     end = _shift_date(ex_date, 2)
     # 1) 东财不复权（熔断：连续失败后直接跳过，避免拖慢整体）
     if not _em_blocked():
-        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
         for market in markets:
             try:
                 j = fetch_json(KLINE_URL, params={
@@ -548,11 +549,10 @@ def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
     min_date: 期望覆盖到的最新日期；若返回数据未覆盖则视为陈旧，切换到备用源。"""
     if not _em_blocked():
         name, bars = _fetch_kline_em(code, beg, end)
-        if bars and (min_date is None or bars[-1]["d"] >= min_date):
+        if valid_bars(bars, min_date):
             _em_note(True)
             return name, bars
-        if bars:
-            _em_note(False)
+        _em_note(False)
     tbars = _fetch_kline_tencent(code, beg, end)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s K线最新仅到 %s（期望 %s）"
@@ -569,7 +569,7 @@ def _fetch_kline_tencent_raw(code, beg, end):
 def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
     """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day。"""
     if not _em_blocked():
-        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
         for market in markets:
             try:
                 j = fetch_json(KLINE_URL, params={
@@ -589,12 +589,13 @@ def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
                         bars.append({"d": p[0], "o": float(p[1]),
                                      "c": float(p[2]), "h": float(p[3]),
                                      "l": float(p[4]), "v": float(p[5])})
-                    if min_date is None or bars[-1]["d"] >= min_date:
+                    if valid_bars(bars, min_date):
                         _em_note(True)
                         return bars
                     _em_note(False)
             except Exception:  # noqa: BLE001
                 continue
+        _em_note(False)
     tbars = _fetch_kline_tencent_raw(code, beg, end)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s 不复权K线最新仅到 %s（期望 %s）"
@@ -603,7 +604,7 @@ def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
 
 
 def _fetch_kline_em(code, beg, end):
-    markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+    markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
     for market in markets:
         try:
             j = fetch_json(KLINE_URL, params={
