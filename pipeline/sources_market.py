@@ -403,6 +403,8 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
                         (sym, beg_d, end_d, adj)},
                 referer="https://gu.qq.com/", timeout=15,
                 retries=2, delay=1.0)
+            if j.get("code") not in (None, 0):
+                raise RuntimeError("腾讯历史K线错误: %s" % j.get("msg"))
             data = (j.get("data") or {}).get(sym) or {}
             rows = data.get(key) or (data.get("day") if qfq else []) or []
             for row in rows:
@@ -419,34 +421,38 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
             break
     if failures:
         raise RuntimeError("腾讯日K分段失败（%s）" % "；".join(failures[:5]))
-    # 区间接口偶发滞后，补抓最近一段；最终仍按日期去重。
+    # 补抓最新窗口；历史已成功且足够新时，不因冗余请求失败丢弃整段历史。
     try:
-        start = datetime.date.fromisoformat(_norm_date(beg))
-        gap_days = (datetime.date.today() - start).days
-        gap_count = max(40, min(700, int(gap_days * 1.6) + 30))
-    except (TypeError, ValueError):
-        gap_count = 700
-    try:
-        j2 = fetch_json(
-            "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-            params={"param": "%s,day,,,%d,%s" % (sym, gap_count, adj)},
-            referer="https://gu.qq.com/", timeout=15,
-            retries=2, delay=1.0)
-        data2 = (j2.get("data") or {}).get(sym) or {}
-        rows2 = data2.get(key) or (data2.get("day") if qfq else []) or []
-        for row in rows2:
-            if len(row) < 6:
-                continue
-            try:
-                bars.append({
-                    "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                    "h": float(row[3]), "l": float(row[4]), "v": float(row[5])})
-            except (TypeError, ValueError):
-                continue
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError("腾讯日K最近段失败: %s" % str(exc)[:240]) from exc
+        bars.extend(fetch_kline_recent(sym[2:], qfq=qfq))
+    except Exception:
+        if not bars:
+            raise
     by_date = {b["d"]: b for b in bars}
     return [by_date[d] for d in sorted(by_date)]
+
+
+def fetch_kline_recent(code, qfq=True):
+    """仅取近期700根日K；调用方必须标记早期历史待补，不冒充完整历史。"""
+    mkt = "sh" if code.startswith(("6", "9", "5")) else ("bj" if code.startswith(("8", "4", "92")) else "sz")
+    sym = mkt + code
+    j = fetch_json(
+        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+        params={"param": "%s,day,,,700,%s" % (sym, "qfq" if qfq else "")},
+        referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+    if j.get("code") not in (None, 0):
+        raise RuntimeError("腾讯近期K线错误: %s" % j.get("msg"))
+    d = (j.get("data") or {}).get(sym) or {}
+    rows = (d.get("qfqday") or d.get("day") or []) if qfq else (d.get("day") or [])
+    out = {}
+    for row in rows:
+        if len(row) < 6:
+            continue
+        try:
+            b = dict(d=row[0], o=float(row[1]), c=float(row[2]), h=float(row[3]), l=float(row[4]), v=float(row[5]))
+        except (TypeError, ValueError):
+            continue
+        out[b["d"]] = b
+    return [out[d] for d in sorted(out)]
 
 
 def _fetch_kline_tencent(code, beg, end):

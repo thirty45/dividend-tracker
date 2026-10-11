@@ -1,7 +1,7 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-08-28-searchfix";
+const APP_VERSION = "2026-10-11-kline-coverage";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 const $ = (s) => document.querySelector(s);
@@ -261,6 +261,7 @@ async function openDetail(code) {
     fetch("data/dividends/" + code + ".json").then((r) => r.json()).catch(() => null),
     fetch("data/kline_raw/" + code + ".json").then((r) => r.json()).catch(() => null),
   ]);
+  if (state.current !== code) return;
   state.k = k;
   state.h = h;
   state.raw = rw;
@@ -274,6 +275,9 @@ async function openDetail(code) {
     document.querySelector("#chart").before(cacheNote);
   }
   cacheNote.textContent = "K线数据截至：前复权 " + lastBarDate(k) + " · 未复权 " + lastBarDate(rw);
+  if ((k && k.history_complete === false) || (rw && rw.history_complete === false)) {
+    cacheNote.textContent += " · 当前显示已获取区间，早期历史待补齐";
+  }
   state.divs = Array.isArray(dv)
     ? dv.reduce((m, x) => { m[x.ex_date] = x; return m; }, {})
     : null;
@@ -423,27 +427,34 @@ function aggregateBars(bars, period) {
   return out;
 }
 
+function selectKlineData(adjusted, raw, mode) {
+  const valid = (p) => p && Array.isArray(p.bars) && p.bars.length > 0;
+  const preferred = mode === "raw" ? raw : adjusted;
+  const alternate = mode === "raw" ? adjusted : raw;
+  if (valid(preferred)) return { bars: preferred.bars, note: "" };
+  if (valid(alternate)) return {
+    bars: alternate.bars,
+    note: mode === "raw" ? "未复权数据暂缺，显示前复权" : "前复权数据暂缺，显示未复权",
+  };
+  return { bars: [], note: "K线数据尚未获取，等待补齐" };
+}
+
 function renderChart() {
   const el = $("#chart");
-  if (!state.k || !state.k.bars || !state.k.bars.length) {
-    el.innerHTML = '<div class="muted" style="padding:20px">暂无K线数据</div>';
+  const selected = selectKlineData(state.k, state.raw, state.kMode);
+  const fqNote = $("#k-fq-note");
+  if (fqNote) fqNote.textContent = selected.note;
+  if (!selected.bars.length) {
+    if (state.chart) { state.chart.dispose(); state.chart = null; }
+    el.innerHTML = '<div class="muted" style="padding:20px">K线数据尚未获取，等待补齐</div>';
     return;
   }
   if (!state.chart) {
+    el.innerHTML = "";
     state.chart = echarts.init(el);
-    window.addEventListener("resize", () => state.chart.resize());
+    window.addEventListener("resize", () => state.chart && state.chart.resize());
   }
-  // 复权模式：默认未复权（raw），缺失时回退前复权
-  let bars = state.k.bars;
-  const rawBars = state.raw && state.raw.bars && state.raw.bars.length
-    ? state.raw.bars : null;
-  if (state.kMode === "raw" && rawBars) bars = rawBars;
-  const fqNote = $("#k-fq-note");
-  if (fqNote) {
-    fqNote.textContent = (state.kMode === "raw" && !rawBars)
-      ? "未复权数据未生成，暂显示前复权"
-      : "";
-  }
+  let bars = selected.bars;
   if (state.kPeriod !== "day") bars = aggregateBars(bars, state.kPeriod);
   const zoomStart = Math.max(0, 100 - 120 / bars.length * 100); // 默认显示近约半年
   const dates = bars.map((b) => b.d);

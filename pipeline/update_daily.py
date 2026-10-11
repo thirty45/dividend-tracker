@@ -386,7 +386,8 @@ def _has_complete_coverage(path, target_date):
         with open(path, encoding="utf-8") as f:
             payload = json.load(f)
         bars = payload.get("bars") or []
-        return bool(payload.get("coverage_complete")
+        return bool(payload.get("history_complete") is not False
+                    and payload.get("coverage_complete")
                     and payload.get("coverage_start")
                     and payload.get("coverage_end")
                     and bars
@@ -639,7 +640,10 @@ def main():
             done_count[0] += 1
             if done_count[0] % 100 == 0:
                 print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
-    print("   K线完成 %d/%d" % (len(klines), len(codes)), flush=True)
+    usable = sum(bool(klines.get(c)) and bool(raw_klines.get(c)) for c in codes)
+    print("   K线可用 %d/%d；本轮失败 %d 只" % (usable, len(codes), len(failed_codes)), flush=True)
+    if failed_codes:
+        print("   待补抓代码: " + ",".join(sorted(failed_codes)), flush=True)
     # 实际K线最新日期（以抓到的数据为准，避免探针日期超前导致后续跳过）
     actual_kline = ""
     for _c, _bars in klines.items():

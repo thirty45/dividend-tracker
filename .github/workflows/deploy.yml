@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['app.js', 'index.html', 'style.css', '.github/workflows/deploy.yml']
+    paths: ['app.js', 'index.html', 'style.css', 'pipeline/repair_kline.py', 'pipeline/sources_market.py', '.github/workflows/deploy.yml']
 permissions:
   contents: read
   pages: write
@@ -14,11 +14,15 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
       - uses: actions/cache/restore@v4
         with:
           path: |
@@ -26,8 +30,25 @@ jobs:
             data/kline_raw
             data/hk/kline
             data/hk/kline_raw
+            data/hk/kline_segments
           key: kline-deploy-${{ github.run_id }}
           restore-keys: kline-
+      - name: 补齐并检查个股K线覆盖
+        run: python pipeline/repair_kline.py --repair --recent-first
+        env:
+          PYTHONUNBUFFERED: '1'
+      - name: 保存补齐后的K线缓存
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/kline
+            data/kline_raw
+            data/hk/kline
+            data/hk/kline_raw
+            data/hk/kline_segments
+          key: kline-deploy-${{ github.run_id }}
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

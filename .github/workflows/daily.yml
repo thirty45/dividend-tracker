@@ -88,6 +88,11 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
 
+      - name: 补齐并检查个股K线覆盖
+        run: python pipeline/repair_kline.py --repair
+        env:
+          PYTHONUNBUFFERED: '1'
+
       - name: 保存K线缓存
         if: always()
         continue-on-error: true

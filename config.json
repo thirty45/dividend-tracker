@@ -32,7 +32,7 @@
   "kline_start": "19900101",
   "kline_full_days": 7,
   "history_keep": 0,
-  "workers": 16,
+  "workers": 4,
   "company_cache_days": 30,
   "company_workers": 16,
   "finance_start_year": 2016,
