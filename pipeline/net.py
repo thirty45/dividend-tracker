@@ -15,7 +15,9 @@ UA = (
 
 
 class FetchError(RuntimeError):
-    pass
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 def fetch(url, params=None, headers=None, referer=None, timeout=20,
@@ -62,7 +64,8 @@ def fetch(url, params=None, headers=None, referer=None, timeout=20,
             last_err = exc
             if attempt + 1 < retries:
                 time.sleep(delay * (attempt + 1) + 0.3)
-    raise FetchError("请求失败(%d次): %s -> %r" % (attempt + 1, url, last_err))
+    code = last_err.code if isinstance(last_err, HTTPError) else None
+    raise FetchError("请求失败(%d次): %s -> %r" % (attempt + 1, url, last_err), code=code)
 
 
 def fetch_json(url, params=None, headers=None, referer=None, timeout=20,

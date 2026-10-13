@@ -17,6 +17,7 @@ sys.path.insert(0, BASE)
 from pipeline import sources_market as sm  # noqa: E402
 from pipeline import company as comp  # noqa: E402
 from pipeline.kline import (valid_bars, read_series, history_complete,
+                            fetched_span_complete,
                             coverage_fields as _coverage_fields,
                             merge_bars as _merge_bars, align_adjusted_history)
 
@@ -409,10 +410,14 @@ def refresh_kline_series(code, old, target_date, cfg, raw=False, force=False):
         except ValueError:
             pass
 
+    span_complete = True
+
     def fetch_from(begin):
+        nonlocal span_complete
         name, bars = ("", sm.fetch_kline_raw(code, begin, "20500101", target_date)) if raw else sm.fetch_kline(code, begin, "20500101", target_date)
         if not valid_bars(bars, target_date):
             raise RuntimeError("K线为空、损坏或未覆盖目标日期 %s" % target_date)
+        span_complete = fetched_span_complete(bars)
         return name, bars
 
     try:
@@ -426,14 +431,20 @@ def refresh_kline_series(code, old, target_date, cfg, raw=False, force=False):
                 need_full = True
             else:
                 bars = _merge_bars(aligned, bars, cfg.get("history_keep", 1400))
-        if need_full:
+        if need_full and raw and previous and not span_complete:
+            # Unadjusted prices can be merged; an early-window gap must not drop the tail.
+            bars = _merge_bars(previous, bars, cfg.get("history_keep", 0))
+        elif need_full and previous and not span_complete and len(bars) < len(previous):
+            raise RuntimeError("早期历史未补齐，保留更长的本地K线")
+        elif need_full:
             bars = _merge_bars([], bars, cfg.get("history_keep", 1400))
         if not valid_bars(bars, target_date):
             raise RuntimeError("合并后的K线校验失败")
         now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        history_ok = span_complete if need_full else True
         payload = dict(code=code, name=name or old.get("name", ""), date=bars[-1]["d"],
-                       updated=now, full_date=now[:10] if need_full else full_date,
-                       bars=bars, history_complete=True)
+                       updated=now, full_date=now[:10] if need_full and history_ok else ("" if need_full else full_date),
+                       bars=bars, history_complete=history_ok)
         payload.update(_coverage_fields(bars, target_date))
         return dict(payload=payload, changed=True, error=None, full=need_full)
     except Exception as exc:

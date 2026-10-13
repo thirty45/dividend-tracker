@@ -5,6 +5,28 @@ import math
 from pathlib import Path
 
 
+def usable_bar(bar, tolerance=0.010001):
+    """One bar has a real date and OHLC within a single price tick."""
+    try:
+        date = bar["d"]
+        if not isinstance(date, str) or len(date) != 10:
+            return False
+        if datetime.date.fromisoformat(date).isoformat() != date:
+            return False
+        if any(isinstance(bar[k], bool) or not isinstance(bar[k], (int, float))
+               for k in ("o", "c", "h", "l", "v")):
+            return False
+        o, c, h, l, v = (bar[k] for k in ("o", "c", "h", "l", "v"))
+        if not all(math.isfinite(x) for x in (o, c, h, l, v)):
+            return False
+        # Independently rounded adjusted OHLC can differ by one price tick.
+        if h < max(o, c, l) - tolerance or l > min(o, c, h) + tolerance or v < 0:
+            return False
+        return True
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+
+
 def valid_bars(bars, min_date=None, tolerance=0.010001):
     if not isinstance(bars, list) or not bars:
         return False
@@ -12,18 +34,7 @@ def valid_bars(bars, min_date=None, tolerance=0.010001):
     try:
         for bar in bars:
             date = bar["d"]
-            if not isinstance(date, str) or len(date) != 10 or date <= previous:
-                return False
-            if datetime.date.fromisoformat(date).isoformat() != date:
-                return False
-            if any(isinstance(bar[k], bool) or not isinstance(bar[k], (int, float))
-                   for k in ("o", "c", "h", "l", "v")):
-                return False
-            o, c, h, l, v = (bar[k] for k in ("o", "c", "h", "l", "v"))
-            if not all(math.isfinite(x) for x in (o, c, h, l, v)):
-                return False
-            # Independently rounded adjusted OHLC can differ by one price tick.
-            if h < max(o, c, l) - tolerance or l > min(o, c, h) + tolerance or v < 0:
+            if not isinstance(date, str) or date <= previous or not usable_bar(bar, tolerance):
                 return False
             previous = date
         return min_date is None or previous >= min_date
@@ -37,6 +48,20 @@ def read_series(path):
         return payload if isinstance(payload, dict) and valid_bars(payload.get("bars")) else None
     except (OSError, ValueError, TypeError):
         return None
+
+
+class KlineBars(list):
+    """Bars from one fetch, plus whether the requested span was fully read."""
+
+    def __init__(self, bars, history_complete=True, gaps=None):
+        list.__init__(self, bars)
+        self.history_complete = bool(history_complete)
+        self.gaps = list(gaps or [])
+
+
+def fetched_span_complete(bars):
+    """Plain lists are complete; a fetch that skipped an unavailable window is not."""
+    return getattr(bars, "history_complete", True) is not False
 
 
 def history_complete(payload):
