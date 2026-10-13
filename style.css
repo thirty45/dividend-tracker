@@ -9,6 +9,7 @@
   --blue: #1e5eff;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 /* 防止页面级横向溢出；用 clip 而非 hidden，避免产生滚动容器导致 position:sticky 吸顶失效 */
 html, body { overflow-x: clip; }
 body {

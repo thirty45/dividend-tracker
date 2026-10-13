@@ -16,6 +16,10 @@ sys.path.insert(0, BASE)
 
 from pipeline import sources_market as sm  # noqa: E402
 from pipeline import company as comp  # noqa: E402
+from pipeline.kline import (valid_bars, read_series, history_complete,
+                            fetched_span_complete,
+                            coverage_fields as _coverage_fields,
+                            merge_bars as _merge_bars, align_adjusted_history)
 
 
 def load_config():
@@ -369,34 +373,9 @@ def _shift_days(d, days):
     return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
 
 
-def _merge_bars(old, new, keep=0):
-    """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
-    by = {}
-    for b in old or []:
-        by[b["d"]] = b
-    for b in new or []:
-        by[b["d"]] = b
-    bars = [by[d] for d in sorted(by)]
-    return bars[-keep:] if keep else bars
-
-
 def _has_complete_coverage(path, target_date):
-    """只有带完整覆盖元数据且最新日期不落后时，才允许日更跳过。"""
-    try:
-        with open(path, encoding="utf-8") as f:
-            payload = json.load(f)
-        bars = payload.get("bars") or []
-        return bool(payload.get("history_complete") is not False
-                    and payload.get("coverage_complete")
-                    and payload.get("coverage_start")
-                    and payload.get("coverage_end")
-                    and bars
-                    and payload["coverage_end"] >= target_date
-                    and bars[0].get("d") == payload["coverage_start"]
-                    and bars[-1].get("d") == payload["coverage_end"])
-    except (OSError, ValueError, TypeError, KeyError, IndexError):
-        return False
-
+    payload = read_series(path)
+    return bool(history_complete(payload) and payload["bars"][-1]["d"] >= target_date)
 
 def _all_kline_coverage(codes, kline_dir, raw_dir, target_date):
     """检查当前有效股票池的前复权/不复权文件是否都完成覆盖。"""
@@ -410,28 +389,66 @@ def _all_kline_coverage(codes, kline_dir, raw_dir, target_date):
     return bool(codes)
 
 
-def _coverage_fields(bars, target_date):
-    """为K线文件生成可审计的覆盖元数据。"""
-    start = bars[0].get("d") if bars else ""
-    end = bars[-1].get("d") if bars else ""
-    return {
-        "coverage_start": start or "",
-        "coverage_end": end or "",
-        "coverage_complete": bool(start and end and end >= target_date),
-    }
-
-
 def _pair_bars_valid(qbars, rbars, target_date):
-    """日更写入前校验两套K线均连续升序去重且覆盖同一首尾日期。"""
-    def valid(bars):
-        dates = [str(b.get("d") or "") for b in bars or []]
-        return bool(dates and all(dates) and dates == sorted(set(dates))
-                    and dates[-1] >= target_date)
-    # Adjustment providers may omit an early listing day or historical bars.
-    # Each series is independent; preserve its full history without inventing
-    # missing prices or requiring an identical trading calendar.
-    return valid(qbars) and valid(rbars)
+    """Validate each price series independently, including dates and OHLCV."""
+    return valid_bars(qbars, target_date) and valid_bars(rbars, target_date)
 
+
+def refresh_kline_series(code, old, target_date, cfg, raw=False, force=False):
+    """Return a candidate without modifying files; failure retains that mode's cache."""
+    old = old if isinstance(old, dict) and valid_bars(old.get("bars")) else {}
+    previous = old.get("bars", [])
+    complete = history_complete(old)
+    if not force and complete and previous[-1]["d"] >= target_date:
+        return dict(payload=old, changed=False, error=None, full=False)
+    need_full = force or not complete
+    full_date = old.get("full_date") or ""
+    interval = cfg.get("kline_full_days", 0)
+    if not need_full and interval > 0:
+        try:
+            need_full = (datetime.date.today() - datetime.date.fromisoformat(full_date)).days >= interval
+        except ValueError:
+            pass
+
+    span_complete = True
+
+    def fetch_from(begin):
+        nonlocal span_complete
+        name, bars = ("", sm.fetch_kline_raw(code, begin, "20500101", target_date)) if raw else sm.fetch_kline(code, begin, "20500101", target_date)
+        if not valid_bars(bars, target_date):
+            raise RuntimeError("K线为空、损坏或未覆盖目标日期 %s" % target_date)
+        span_complete = fetched_span_complete(bars)
+        return name, bars
+
+    try:
+        begin = cfg.get("kline_start", "19900101") if need_full else _shift_days(previous[-1]["d"], -15)
+        name, bars = fetch_from(begin)
+        if not need_full:
+            try:
+                aligned = previous if raw else align_adjusted_history(previous, bars)
+            except ValueError:
+                name, bars = fetch_from(cfg.get("kline_start", "19900101"))
+                need_full = True
+            else:
+                bars = _merge_bars(aligned, bars, cfg.get("history_keep", 1400))
+        if need_full and raw and previous and not span_complete:
+            # Unadjusted prices can be merged; an early-window gap must not drop the tail.
+            bars = _merge_bars(previous, bars, cfg.get("history_keep", 0))
+        elif need_full and previous and not span_complete and len(bars) < len(previous):
+            raise RuntimeError("早期历史未补齐，保留更长的本地K线")
+        elif need_full:
+            bars = _merge_bars([], bars, cfg.get("history_keep", 1400))
+        if not valid_bars(bars, target_date):
+            raise RuntimeError("合并后的K线校验失败")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        history_ok = span_complete if need_full else True
+        payload = dict(code=code, name=name or old.get("name", ""), date=bars[-1]["d"],
+                       updated=now, full_date=now[:10] if need_full and history_ok else ("" if need_full else full_date),
+                       bars=bars, history_complete=history_ok)
+        payload.update(_coverage_fields(bars, target_date))
+        return dict(payload=payload, changed=True, error=None, full=need_full)
+    except Exception as exc:
+        return dict(payload=old, changed=False, error=str(exc), full=need_full)
 
 def main():
     if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -502,6 +519,8 @@ def main():
     _, valuation = sm.fetch_valuation(trade_date)
     val = {v["SECURITY_CODE"]: v for v in valuation if v.get("SECURITY_CODE")}
     print("   估值记录 %d 条" % len(val))
+    if not val:
+        raise RuntimeError("估值接口返回空数据，保留原快照，禁止覆盖为空行情")
 
     print("2/5 抓取最新报告期 ROE ...")
     roe_date, roe_map = sm.fetch_roe()
@@ -514,136 +533,50 @@ def main():
     print("   %d 只股票有分红记录" % len(bonus))
 
     print("4/5 抓取K线(并发) ...", flush=True)
-    klines = {}
-    raw_klines = {}
-    full_dates = {}
-    todo = []          # (code, 已有前复权bars, 已有未复权bars, 是否全量, full_date)
-    today_iso = datetime.date.today().isoformat()
-    full_interval = cfg.get("kline_full_days", 7)
-    for c in codes:
-        pa = os.path.join(kline_dir, c + ".json")
-        pr = os.path.join(raw_dir, c + ".json")
-        adj_bars = raw_bars = None
-        adj_full = raw_full = ""
-        if not args.force and os.path.exists(pa):
-            try:
-                with open(pa, encoding="utf-8") as f:
-                    old = json.load(f)
-                adj_bars = old.get("bars") or []
-                adj_full = old.get("full_date") or ""
-            except Exception:  # noqa: BLE001
-                adj_bars = None
-        if not args.force and os.path.exists(pr):
-            try:
-                with open(pr, encoding="utf-8") as f:
-                    oldr = json.load(f)
-                raw_bars = oldr.get("bars") or []
-                raw_full = oldr.get("full_date") or ""
-            except Exception:  # noqa: BLE001
-                raw_bars = None
-        cur_adj = bool(adj_bars and adj_bars[-1].get("d", "") >= kline_target
-                       and _has_complete_coverage(pa, kline_target))
-        cur_raw = bool(raw_bars and raw_bars[-1].get("d", "") >= kline_target
-                       and _has_complete_coverage(pr, kline_target))
-        if cur_adj and cur_raw:
-            klines[c] = adj_bars
-            raw_klines[c] = raw_bars
-            full_dates[c] = adj_full or raw_full or today_iso
-            continue
-        need_full = (args.force or not adj_bars or not raw_bars
-                     or not _has_complete_coverage(pa, kline_target)
-                     or not _has_complete_coverage(pr, kline_target))
-        full_ref = adj_full or raw_full or ""
-        if not need_full:
-            try:
-                last_full = datetime.date.fromisoformat(full_ref)
-                if (datetime.date.today() - last_full).days >= full_interval:
-                    need_full = True
-            except ValueError:
-                # 旧格式缓存没有 full_date：按已有K线末根日期做增量，不误判全量
-                last_d = ((adj_bars[-1]["d"] if adj_bars else "") or
-                          (raw_bars[-1]["d"] if raw_bars else ""))
-                try:
-                    datetime.date.fromisoformat(last_d)
-                    full_ref = last_d
-                except ValueError:
-                    need_full = True
-                    full_ref = today_iso
-        todo.append((c, adj_bars or [], raw_bars or [],
-                     need_full, full_ref or today_iso))
-    n_full = sum(1 for t in todo if t[3])
-    print("   待抓取K线 %d 只（全量 %d 只 · 增量 %d 只 · 已最新 %d 只）"
-          % (len(todo), n_full, len(todo) - n_full, len(codes) - len(todo)),
-          flush=True)
-    done_count = [0]
+    klines, raw_klines = {}, {}
+    todo = []
+    for code in codes:
+        adjusted = read_series(os.path.join(kline_dir, code + ".json"))
+        raw = read_series(os.path.join(raw_dir, code + ".json"))
+        current = lambda payload: history_complete(payload) and payload["bars"][-1]["d"] >= kline_target
+        if not args.force and current(adjusted) and current(raw):
+            klines[code], raw_klines[code] = adjusted["bars"], raw["bars"]
+        else:
+            todo.append((code, adjusted, raw))
+    print("   待更新K线 %d 只 · 已最新 %d 只；两套序列独立更新" %
+          (len(todo), len(codes) - len(todo)), flush=True)
 
     def _fetch_pair(item):
-        c, abars, rbars, need_full, full_date = item
-        beg = cfg["kline_start"]
-        if not need_full and abars:
-            beg = _shift_days(abars[-1]["d"], -15) or beg
-        name, bars = sm.fetch_kline(c, beg, "20500101", kline_target)
-        rbeg = beg
-        if not need_full and rbars:
-            rbeg = _shift_days(rbars[-1]["d"], -15) or rbeg
-        rbars_new = sm.fetch_kline_raw(c, rbeg, "20500101", kline_target)
-        if not _pair_bars_valid(bars, rbars_new, kline_target):
-            def span(xs):
-                return "%d根/%s~%s" % (len(xs), xs[0]["d"] if xs else "空",
-                                      xs[-1]["d"] if xs else "空")
-            raise RuntimeError("K线校验失败: 前复权%s，不复权%s，目标%s" %
-                               (span(bars), span(rbars_new), kline_target))
-        keep = cfg.get("history_keep", 1400)
-        merged = _merge_bars([] if need_full else abars, bars, keep)
-        merged_raw = _merge_bars([] if need_full else rbars, rbars_new, keep)
-        full = today_iso if need_full else full_date
-        return c, name, merged, merged_raw, full
+        code, adjusted, raw = item
+        return code, refresh_kline_series(code, adjusted, kline_target, cfg, force=args.force), refresh_kline_series(code, raw, kline_target, cfg, raw=True, force=args.force)
 
-    old_by_code = {item[0]: (item[1], item[2], item[4]) for item in todo}
     failed_codes = set()
     with ThreadPoolExecutor(max_workers=cfg.get("workers", 6)) as ex:
-        futs = {ex.submit(_fetch_pair, item): item[0]
-                for item in todo}
-        now_iso = datetime.datetime.now().isoformat(timespec="seconds")
-        for fut in as_completed(futs):
-            c = futs[fut]
-            try:
-                c2, name, bars, rbars, full_date = fut.result()
-            except Exception as exc:  # noqa: BLE001
-                c2 = c
-                print("   K线失败 %s: %s" % (c, exc), flush=True)
-                name = name_map.get(c, "")
-                bars, rbars, full_date = old_by_code.get(c, ([], [], today_iso))
-                failed_codes.add(c)
-            klines[c2] = bars
-            raw_klines[c2] = rbars
-            full_dates[c2] = full_date
-            if c2 in failed_codes:
-                continue
-            if name:
-                name_map[c2] = name
-            # 边抓边写，断点可续
-            path = os.path.join(kline_dir, c2 + ".json")
-            with open(path, "w", encoding="utf-8") as f:
-                payload = {"code": c2, "name": name_map.get(c2, ""),
-                           "date": kline_target, "updated": now_iso,
-                           "full_date": full_date, "bars": klines[c2]}
-                payload.update(_coverage_fields(klines[c2], kline_target))
-                json.dump(payload, f, ensure_ascii=False)
-            pathr = os.path.join(raw_dir, c2 + ".json")
-            with open(pathr, "w", encoding="utf-8") as f:
-                payload = {"code": c2, "name": name_map.get(c2, ""),
-                           "date": kline_target, "updated": now_iso,
-                           "full_date": full_date, "bars": raw_klines[c2]}
-                payload.update(_coverage_fields(raw_klines[c2], kline_target))
-                json.dump(payload, f, ensure_ascii=False)
-            done_count[0] += 1
-            if done_count[0] % 100 == 0:
-                print("   K线进度 %d/%d" % (done_count[0], len(todo)), flush=True)
+        futures = {ex.submit(_fetch_pair, item): item[0] for item in todo}
+        for done, future in enumerate(as_completed(futures), 1):
+            code, adjusted, raw = future.result()
+            for mode, result, folder, output in (("前复权", adjusted, kline_dir, klines),
+                                                 ("不复权", raw, raw_dir, raw_klines)):
+                payload = result["payload"]
+                output[code] = payload.get("bars", [])
+                if result["error"]:
+                    failed_codes.add(code)
+                    print("   K线失败 %s %s（保留此序列原文件）: %s" %
+                          (code, mode, result["error"]), flush=True)
+                if result["changed"]:
+                    if payload.get("name"):
+                        name_map[code] = payload["name"]
+                    else:
+                        payload["name"] = name_map.get(code, "")
+                    with open(os.path.join(folder, code + ".json"), "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, allow_nan=False)
+            if done % 100 == 0:
+                print("   K线进度 %d/%d" % (done, len(todo)), flush=True)
     usable = sum(bool(klines.get(c)) and bool(raw_klines.get(c)) for c in codes)
     print("   K线可用 %d/%d；本轮失败 %d 只" % (usable, len(codes), len(failed_codes)), flush=True)
     if failed_codes:
         print("   待补抓代码: " + ",".join(sorted(failed_codes)), flush=True)
+
     # 实际K线最新日期（以抓到的数据为准，避免探针日期超前导致后续跳过）
     actual_kline = ""
     for _c, _bars in klines.items():
@@ -894,26 +827,7 @@ def main():
                               "percentile": 0.30},
                    "items": dma_items}, f, ensure_ascii=False)
 
-    for c, bars in klines.items():
-        if c in failed_codes:
-            continue
-        path = os.path.join(kline_dir, c + ".json")
-        with open(path, "w", encoding="utf-8") as f:
-            payload = {"code": c, "name": name_map.get(c, ""),
-                       "date": kline_target, "updated": now,
-                       "full_date": full_dates.get(c, today_iso), "bars": bars}
-            payload.update(_coverage_fields(bars, kline_target))
-            json.dump(payload, f, ensure_ascii=False)
-    for c, rbars in raw_klines.items():
-        if c in failed_codes:
-            continue
-        pathr = os.path.join(raw_dir, c + ".json")
-        with open(pathr, "w", encoding="utf-8") as f:
-            payload = {"code": c, "name": name_map.get(c, ""),
-                       "date": kline_target, "updated": now,
-                       "full_date": full_dates.get(c, today_iso), "bars": rbars}
-            payload.update(_coverage_fields(rbars, kline_target))
-            json.dump(payload, f, ensure_ascii=False)
+    # Each successfully refreshed price series was already persisted above.
 
     for it in items:
         path = os.path.join(hist_dir, it["code"] + ".json")
@@ -1008,44 +922,7 @@ def main():
     except Exception as exc:  # noqa: BLE001
         print("   高管增持抓取失败: %s" % exc, flush=True)
 
-    # 基金“当天涨跌幅”轻量刷新（只更新 funds.json 的 nav_date/chg_today）
-    try:
-        funds_path = os.path.join(data_root, "funds.json")
-        if os.path.exists(funds_path):
-            with open(funds_path, encoding="utf-8") as f:
-                fnd = json.load(f)
-            fund_items = fnd.get("items") or []
-            if fund_items:
-                fcodes = [x.get("code") for x in fund_items if x.get("code")]
-                nav_map = {}
-                with ThreadPoolExecutor(max_workers=8) as ex:
-                    futs = {ex.submit(sm.fetch_fund_nav, c): c for c in fcodes}
-                    for fut in as_completed(futs):
-                        c = futs[fut]
-                        try:
-                            nav_map[c] = fut.result()
-                        except Exception:  # noqa: BLE001
-                            nav_map[c] = None
-                changed = 0
-                for it in fund_items:
-                    nv = nav_map.get(it.get("code"))
-                    if nv and nv.get("date"):
-                        if it.get("nav_date") != nv["date"] or it.get("chg_today") != nv.get("chg"):
-                            it["nav_date"] = nv["date"]
-                            it["chg_today"] = nv.get("chg")
-                            changed += 1
-                if changed:
-                    fnd["updated_at"] = now
-                    with open(funds_path, "w", encoding="utf-8") as f:
-                        json.dump(fnd, f, ensure_ascii=False)
-                print("   基金当天涨跌幅已刷新: %d/%d 只更新" % (changed, len(fund_items)),
-                      flush=True)
-            else:
-                print("   funds.json 为空，跳过基金涨跌幅刷新", flush=True)
-        else:
-            print("   未找到 funds.json（尚未构建基金页），跳过", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        print("   基金涨跌幅刷新失败: %s" % exc, flush=True)
+    # funds.py refreshes quotes and NAV together; do not download every fund twice.
 
     with open(os.path.join(meta_dir, "boards.json"), "w",
               encoding="utf-8") as f:

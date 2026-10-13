@@ -5,7 +5,8 @@ import datetime
 import re
 import threading
 
-from .net import fetch, fetch_json
+from .net import FetchError, fetch, fetch_json
+from .kline import KlineBars, usable_bar, valid_bars
 
 DC_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 DC_WEB_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
@@ -390,71 +391,132 @@ def _iter_date_windows(beg, end, chunk_days=KLINE_SEGMENT_DAYS):
         start = stop + datetime.timedelta(days=1)
 
 
-def _fetch_tencent_segments(sym, beg, end, qfq):
-    """腾讯日K分段抓取并去重；qfq=True时优先读取qfqday。"""
-    end = end or datetime.date.today().strftime("%Y%m%d")
-    adj = "qfq" if qfq else ""
-    key = "qfqday" if qfq else "day"
+def _is_unavailable(exc):
+    """400/404/501 (and Tencent 'Not Implemented') mean this window has no data.
+
+    These are not retried: pipeline.net already stops on the first hard status.
+    """
+    code = getattr(exc, "code", None)
+    if code in (400, 404, 501):
+        return True
+    text = str(exc)
+    if "Not Implemented" in text:
+        return True
+    return any(marker in text for marker in ("HTTPError 400", "HTTPError 404", "HTTPError 501"))
+
+
+def _rows_to_bars(rows):
     bars = []
-    failures = []
-    for beg_d, end_d in _iter_date_windows(beg, end):
-        try:
-            j = fetch_json(
-                "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-                params={"param": "%s,day,%s,%s,1000,%s" %
-                        (sym, beg_d, end_d, adj)},
-                referer="https://gu.qq.com/", timeout=15,
-                retries=2, delay=1.0)
-            if j.get("code") not in (None, 0):
-                raise RuntimeError("腾讯历史K线错误: %s" % j.get("msg"))
-            data = (j.get("data") or {}).get(sym) or {}
-            rows = data.get(key) or (data.get("day") if qfq else []) or []
-            for row in rows:
-                if len(row) < 6:
-                    continue
-                try:
-                    bars.append({
-                        "d": row[0], "o": float(row[1]), "c": float(row[2]),
-                        "h": float(row[3]), "l": float(row[4]), "v": float(row[5])})
-                except (TypeError, ValueError):
-                    continue
-        except Exception as exc:  # noqa: BLE001
-            failures.append("%s~%s: %s" % (beg_d, end_d, str(exc)[:160]))
-            break
-    if failures:
-        raise RuntimeError("腾讯日K分段失败（%s）" % "；".join(failures[:5]))
-    # 补抓最新窗口；历史已成功且足够新时，不因冗余请求失败丢弃整段历史。
-    try:
-        bars.extend(fetch_kline_recent(sym[2:], qfq=qfq))
-    except Exception:
-        if not bars:
-            raise
-    by_date = {b["d"]: b for b in bars}
-    return [by_date[d] for d in sorted(by_date)]
-
-
-def fetch_kline_recent(code, qfq=True):
-    """仅取近期700根日K；调用方必须标记早期历史待补，不冒充完整历史。"""
-    mkt = _tencent_market(code)
-    sym = mkt + code
-    j = fetch_json(
-        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
-        params={"param": "%s,day,,,700,%s" % (sym, "qfq" if qfq else "")},
-        referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
-    if j.get("code") not in (None, 0):
-        raise RuntimeError("腾讯近期K线错误: %s" % j.get("msg"))
-    d = (j.get("data") or {}).get(sym) or {}
-    rows = (d.get("qfqday") or d.get("day") or []) if qfq else (d.get("day") or [])
-    out = {}
-    for row in rows:
+    for row in rows or []:
         if len(row) < 6:
             continue
         try:
-            b = dict(d=row[0], o=float(row[1]), c=float(row[2]), h=float(row[3]), l=float(row[4]), v=float(row[5]))
+            bar = {
+                "d": row[0], "o": float(row[1]), "c": float(row[2]),
+                "h": float(row[3]), "l": float(row[4]), "v": float(row[5])}
         except (TypeError, ValueError):
             continue
-        out[b["d"]] = b
-    return [out[d] for d in sorted(out)]
+        # Skip a single broken print. An empty or corrupt series still fails later.
+        if usable_bar(bar):
+            bars.append(bar)
+    return bars
+
+
+def _fetch_tencent_window(sym, beg_d, end_d, qfq):
+    adj = "qfq" if qfq else ""
+    key = "qfqday" if qfq else "day"
+    j = fetch_json(
+        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+        params={"param": "%s,day,%s,%s,1000,%s" % (sym, beg_d, end_d, adj)},
+        referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+    if j.get("code") not in (None, 0):
+        raise RuntimeError("腾讯历史K线错误: %s" % j.get("msg"))
+    data = (j.get("data") or {}).get(sym) or {}
+    rows = data.get(key) or (data.get("day") if qfq else []) or []
+    return _rows_to_bars(rows)
+
+
+def _fetch_tencent_count(sym, qfq, count):
+    adj = "qfq" if qfq else ""
+    key = "qfqday" if qfq else "day"
+    j = fetch_json(
+        "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+        params={"param": "%s,day,,,%d,%s" % (sym, count, adj)},
+        referer="https://gu.qq.com/", timeout=15, retries=2, delay=1.0)
+    if j.get("code") not in (None, 0):
+        raise RuntimeError("腾讯近期K线错误: %s" % j.get("msg"))
+    data = (j.get("data") or {}).get(sym) or {}
+    rows = (data.get(key) or data.get("day") or []) if qfq else (data.get("day") or [])
+    return _rows_to_bars(rows)
+
+
+def _segment_failure(hard_gaps, other_gaps):
+    err = RuntimeError("腾讯日K分段失败（%s）" % "；".join((hard_gaps + other_gaps)[:5]))
+    # A walk that only hit hard 400/404/501 should not be repeated immediately.
+    err.unavailable = bool(hard_gaps) and not other_gaps
+    return err
+
+
+def _fetch_tencent_segments(sym, beg, end, qfq):
+    """腾讯日K分段抓取并去重；qfq=True时优先读取qfqday。
+
+    早期窗口的 400/404/501 只跳过该窗口，后续窗口和近期请求仍保留可用K线，
+    并用 history_complete=False 表示早期历史待补。
+    """
+    end = end or datetime.date.today().strftime("%Y%m%d")
+    bars = []
+    hard_gaps = []
+    other_gaps = []
+    for beg_d, end_d in _iter_date_windows(beg, end):
+        try:
+            bars.extend(_fetch_tencent_window(sym, beg_d, end_d, qfq))
+        except Exception as exc:  # noqa: BLE001
+            label = "%s~%s: %s" % (beg_d, end_d, str(exc)[:160])
+            if _is_unavailable(exc):
+                hard_gaps.append(label)
+                continue
+            other_gaps.append(label)
+            break
+    # 补抓最新窗口；已有分段数据时，不因这条冗余请求失败丢弃历史。
+    try:
+        bars.extend(_fetch_tencent_count(sym, qfq, 700))
+    except Exception as exc:  # noqa: BLE001
+        if not bars:
+            label = "recent: %s" % str(exc)[:160]
+            if _is_unavailable(exc):
+                hard_gaps.append(label)
+            else:
+                other_gaps.append(label)
+            raise _segment_failure(hard_gaps, other_gaps) from exc
+    if not bars:
+        raise _segment_failure(hard_gaps, other_gaps)
+    by_date = {b["d"]: b for b in bars}
+    ordered = [by_date[d] for d in sorted(by_date)]
+    return KlineBars(ordered, history_complete=not hard_gaps and not other_gaps,
+                     gaps=hard_gaps + other_gaps)
+
+
+def fetch_kline_recent(code, qfq=True):
+    """仅取近期约700根日K；调用方必须标记早期历史待补，不冒充完整历史。
+
+    根数接口若返回 400/404/501，只再试一个日期窗口，不反复重试同一个 501。
+    """
+    sym = _tencent_market(code) + code
+    try:
+        bars = _fetch_tencent_count(sym, qfq, 700)
+    except Exception as exc:  # noqa: BLE001
+        if not _is_unavailable(exc):
+            raise
+        end = datetime.date.today()
+        beg = end - datetime.timedelta(days=1000)
+        try:
+            bars = _fetch_tencent_window(sym, beg.isoformat(), end.isoformat(), qfq)
+        except Exception as window_exc:  # noqa: BLE001
+            raise window_exc from exc
+        if not bars:
+            raise FetchError("腾讯近期日期窗口为空", code=getattr(exc, "code", None)) from exc
+        return KlineBars(bars, history_complete=False, gaps=[str(exc)[:160]])
+    return KlineBars(bars, history_complete=False)
 
 
 def _fetch_kline_tencent(code, beg, end):
@@ -483,7 +545,7 @@ def fetch_raw_ex_open(code, ex_date):
     end = _shift_date(ex_date, 2)
     # 1) 东财不复权（熔断：连续失败后直接跳过，避免拖慢整体）
     if not _em_blocked():
-        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
         for market in markets:
             try:
                 j = fetch_json(KLINE_URL, params={
@@ -548,11 +610,10 @@ def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
     min_date: 期望覆盖到的最新日期；若返回数据未覆盖则视为陈旧，切换到备用源。"""
     if not _em_blocked():
         name, bars = _fetch_kline_em(code, beg, end)
-        if bars and (min_date is None or bars[-1]["d"] >= min_date):
+        if valid_bars(bars, min_date):
             _em_note(True)
             return name, bars
-        if bars:
-            _em_note(False)
+        _em_note(False)
     tbars = _fetch_kline_tencent(code, beg, end)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s K线最新仅到 %s（期望 %s）"
@@ -569,7 +630,7 @@ def _fetch_kline_tencent_raw(code, beg, end):
 def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
     """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day。"""
     if not _em_blocked():
-        markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+        markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
         for market in markets:
             try:
                 j = fetch_json(KLINE_URL, params={
@@ -589,12 +650,13 @@ def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
                         bars.append({"d": p[0], "o": float(p[1]),
                                      "c": float(p[2]), "h": float(p[3]),
                                      "l": float(p[4]), "v": float(p[5])})
-                    if min_date is None or bars[-1]["d"] >= min_date:
+                    if valid_bars(bars, min_date):
                         _em_note(True)
                         return bars
                     _em_note(False)
             except Exception:  # noqa: BLE001
                 continue
+        _em_note(False)
     tbars = _fetch_kline_tencent_raw(code, beg, end)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s 不复权K线最新仅到 %s（期望 %s）"
@@ -603,7 +665,7 @@ def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
 
 
 def _fetch_kline_em(code, beg, end):
-    markets = [1, 0] if code.startswith(("6", "9", "5")) else [0, 1]
+    markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
     for market in markets:
         try:
             j = fetch_json(KLINE_URL, params={

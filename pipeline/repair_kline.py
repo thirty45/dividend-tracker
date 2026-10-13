@@ -6,7 +6,6 @@ joined to old adjusted prices from a different adjustment basis.
 import argparse
 import datetime
 import json
-import math
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,36 +14,9 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 from pipeline import sources_market as sm
+from pipeline.kline import valid_bars, read_series, merge_bars, fetched_span_complete
 
 
-def valid_bars(bars):
-    if not isinstance(bars, list) or not bars:
-        return False
-    try:
-        dates = [b['d'] for b in bars]
-        if dates != sorted(set(dates)):
-            return False
-        for b in bars:
-            datetime.date.fromisoformat(b['d'])
-            o, c, h, l, v = (float(b[k]) for k in ('o', 'c', 'h', 'l', 'v'))
-            if not all(math.isfinite(x) for x in (o, c, h, l, v)):
-                return False
-            # Providers round adjusted OHLC independently. Allow one A-share
-            # price tick (0.01 RMB), retain the exact prices, reject larger errors.
-            tick_tolerance = 0.010001
-            if h < max(o, c, l) - tick_tolerance or l > min(o, c, h) + tick_tolerance or v < 0:
-                return False
-        return True
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return False
-
-
-def read_series(path):
-    try:
-        p = json.loads(path.read_text(encoding='utf-8'))
-        return p if isinstance(p, dict) and valid_bars(p.get('bars')) else None
-    except (OSError, ValueError, TypeError):
-        return None
 
 
 def universe(data, cfg):
@@ -90,6 +62,16 @@ def audit(data, stocks, target):
                 stale=stale, partial_history=partial)
 
 
+def _improves(old, bars):
+    """True when the candidate adds history or a newer end without shrinking."""
+    if not old:
+        return True
+    prev = old['bars']
+    if len(bars) > len(prev) and bars[-1]['d'] >= prev[-1]['d']:
+        return True
+    return bars[-1]['d'] > prev[-1]['d'] and len(bars) >= len(prev)
+
+
 def repair_one(data, code, name, target, cfg, recent_first=False):
     results = []
     for qfq, folder in ((True, 'kline'), (False, 'kline_raw')):
@@ -101,6 +83,7 @@ def repair_one(data, code, name, target, cfg, recent_first=False):
             continue
         errors, bars, complete = [], [], False
         # Sequential retry at bounded concurrency; don't throw away the other mode.
+        # A hard 400/404/501 walk is not repeated; transient failures still retry once.
         for _ in range(0 if recent_first else 2):
             try:
                 if qfq:
@@ -109,31 +92,42 @@ def repair_one(data, code, name, target, cfg, recent_first=False):
                     bars = sm.fetch_kline_raw(code, cfg.get('kline_start', '19900101'), '20500101', target)
                 if not valid_bars(bars):
                     raise RuntimeError('historical series empty or invalid')
-                complete = True
+                complete = fetched_span_complete(bars)
+                errors.extend(str(g)[:400] for g in (getattr(bars, 'gaps', None) or [])[:5])
                 break
             except Exception as exc:
                 errors.append(str(exc)[:400])
                 bars = []
+                if getattr(exc, 'unavailable', False):
+                    break
         if not bars:
             try:
                 recent = sm.fetch_kline_recent(code, qfq=qfq)
                 if not valid_bars(recent):
                     raise RuntimeError('recent series empty or invalid')
-                # Keep an existing longer series if the new one cannot improve it.
-                if old and old['bars'][-1]['d'] >= recent[-1]['d']:
-                    results.append(dict(code=code, mode=folder, status='preserved', errors=errors))
-                    continue
                 bars = recent
+                complete = False
+                errors.extend(str(g)[:400] for g in (getattr(recent, 'gaps', None) or [])[:5])
             except Exception as exc:
                 errors.append(str(exc)[:400])
                 results.append(dict(code=code, mode=folder, status='failed', errors=errors))
                 continue
+        # Raw prices are stable, so an incomplete fetch can extend the cache.
+        # Adjusted prices stay unmerged; a shorter partial must not replace a longer file.
+        if old and not complete and folder == 'kline_raw':
+            bars = merge_bars(old['bars'], bars)
+            if not valid_bars(bars):
+                results.append(dict(code=code, mode=folder, status='failed', errors=errors + ['merged raw series invalid']))
+                continue
+        elif not _improves(old, bars):
+            results.append(dict(code=code, mode=folder, status='preserved', errors=errors))
+            continue
         now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
         payload = dict(code=code, name=name, date=bars[-1]['d'], updated=now,
                        full_date=now[:10] if complete else '', bars=bars,
                        coverage_start=bars[0]['d'], coverage_end=bars[-1]['d'],
                        coverage_complete=complete and bars[-1]['d'] >= target, history_complete=complete,
-                       source='eastmoney-or-tencent' if complete else 'tencent-recent',
+                       source='eastmoney-or-tencent' if complete else 'tencent-partial',
                        repair_errors=errors)
         path.parent.mkdir(parents=True, exist_ok=True)
         # A failed fetch never opens an existing file for writing.
@@ -199,6 +193,8 @@ def main():
     report['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
     report['repairs'] = repaired
     write_report(args.data_root, report)
+    # Early-history gaps (history_complete=false) are usable and do not block deploy.
+    # Absent files, blank JSON, and broken OHLC stay in `missing` and still refuse deploy.
     if not stocks or report['missing']:
         print('拒绝部署：页面股票池仍有缺失/空白/损坏的K线文件', file=sys.stderr)
         return 1

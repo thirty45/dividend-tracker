@@ -29,6 +29,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from pipeline.net import fetch, fetch_json  # noqa: E402
+from pipeline.kline import valid_bars, coverage_fields as _coverage_fields, merge_bars as _merge_bars
 
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 CLIST_FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
@@ -444,41 +445,10 @@ def _shift_days(d, days):
     return (dt + datetime.timedelta(days=days)).strftime("%Y%m%d")
 
 
-def _merge_bars(old, new, keep=0):
-    """按日期合并两批K线（新覆盖旧），升序后保留最近 keep 根。"""
-    by = {}
-    for b in old or []:
-        by[b["d"]] = b
-    for b in new or []:
-        by[b["d"]] = b
-    bars = [by[d] for d in sorted(by)]
-    return bars[-keep:] if keep else bars
-
-
-def _coverage_fields(bars, target_date):
-    """为港股K线文件生成可审计的覆盖元数据。"""
-    start = bars[0].get("d") if bars else ""
-    end = bars[-1].get("d") if bars else ""
-    return {
-        "coverage_start": start or "",
-        "coverage_end": end or "",
-        "coverage_complete": bool(start and end and end >= target_date),
-    }
-
-
 def _pair_bars_valid(qbars, rbars, target_date):
-    """港股写入前校验两套K线均连续升序去重且首尾日期一致。"""
-    cutoff = (datetime.date.fromisoformat(target_date)
-              - datetime.timedelta(days=7)).isoformat()
-    def valid(bars):
-        dates = [str(b.get("d") or "") for b in bars or []]
-        return bool(dates and all(dates) and dates == sorted(set(dates))
-                    and dates[-1] >= cutoff)
-    # Adjustment providers may omit an early listing day or historical bars.
-    # Each series is independent; preserve its full history without inventing
-    # missing prices or requiring an identical trading calendar.
-    return valid(qbars) and valid(rbars)
-
+    """Validate independent HK histories while retaining the existing 7-day window."""
+    cutoff = (datetime.date.fromisoformat(target_date) - datetime.timedelta(days=7)).isoformat()
+    return valid_bars(qbars, cutoff) and valid_bars(rbars, cutoff)
 
 def _fin_vals(row):
     """把一条主要指标行转成常用字段 dict。"""

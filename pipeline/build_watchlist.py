@@ -210,6 +210,7 @@ def main():
                            "coverage_start": coverage_start,
                            "coverage_end": coverage_end,
                            "coverage_complete": bool(coverage_start and coverage_end),
+                           "history_complete": getattr(bars, "history_complete", True) is not False,
                            "bars": bars}, f, ensure_ascii=False)
         return c, bars
 

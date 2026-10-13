@@ -1,12 +1,64 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-10-11-kline-coverage";
+const APP_VERSION = "2026-10-11-efficiency-v1";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
+window.APP_VERSION = APP_VERSION;
 const $ = (s) => document.querySelector(s);
+const jsonCache = new Map();
+const moduleLoads = new Map();
+const JSON_CACHE_LIMIT = 24;
+const JSON_CACHE_TTL = 5 * 60 * 1000;
+
+// Share in-flight requests and retain a bounded cache during this page session.
+function readJSON(path) {
+  const cached = jsonCache.get(path);
+  if (cached && Date.now() - cached.time < JSON_CACHE_TTL) {
+    jsonCache.delete(path);
+    jsonCache.set(path, cached);
+    return cached.promise;
+  }
+  const entry = { time: Date.now(), promise: null };
+  entry.promise = fetch(path).then((response) => {
+    if (!response.ok) {
+      const error = new Error("HTTP " + response.status + "：" + path);
+      error.status = response.status;
+      throw error;
+    }
+    return response.json();
+  }).catch((error) => {
+    if (jsonCache.get(path) === entry) jsonCache.delete(path);
+    throw error;
+  });
+  jsonCache.set(path, entry);
+  while (jsonCache.size > JSON_CACHE_LIMIT) jsonCache.delete(jsonCache.keys().next().value);
+  return entry.promise;
+}
+
+function loadOnce(flag, label, task) {
+  if (state[flag]) return Promise.resolve(true);
+  if (moduleLoads.has(flag)) return moduleLoads.get(flag);
+  const pending = Promise.resolve().then(task).then(() => {
+    state[flag] = true;
+    return true;
+  }).catch((error) => {
+    state[flag] = false;
+    console.error(label + "数据加载失败:", error);
+    return false;
+  }).finally(() => moduleLoads.delete(flag));
+  moduleLoads.set(flag, pending);
+  return pending;
+}
+
+function resetChart(key, selector, message) {
+  if (state[key]) { state[key].dispose(); state[key] = null; }
+  const el = $(selector);
+  if (el) el.innerHTML = '<div class="muted" style="padding:20px">' + esc(message) + '</div>';
+}
 const state = {
   stocks: [], boards: [], snapshot: null,
+  detailRequest: 0, hkDetailRequest: 0, fundDetailRequest: 0,
   sort: { k: "dy", asc: false },
   search: "", industry: "",
   chart: null, trendCharts: [], current: null, k: null, h: null,
@@ -36,7 +88,7 @@ const state = {
 };
 
 const fmt = (v, d = 2) =>
-  v === null || v === undefined || isNaN(v) ? "—" : Number(v).toFixed(d);
+  v === null || v === undefined || v === "" || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(d);
 
 // 与 config.json 保持一致；前端兜底过滤，避免旧快照或独立排名数据漏出目标代码。
 const EXCLUDED_CODE_PREFIXES = ["300", "688"];
@@ -61,22 +113,23 @@ function initials(name) {
 async function load() {
   try {
     const [snap, b, fnd, cbd, ins, dma] = await Promise.all([
-      fetch("data/snapshot.json").then((r) => r.json()),
-      fetch("data/meta/boards.json").then((r) => r.json()),
-      fetch("data/funds.json").then((r) => r.json()).catch(() => null),
-      fetch("data/cbonds.json").then((r) => r.json()).catch(() => null),
-      fetch("data/meta/insider_buys.json").then((r) => r.json()).catch(() => null),
-      fetch("data/meta/dma_low30.json").then((r) => r.json()).catch(() => null),
+      readJSON("data/snapshot.json"),
+      readJSON("data/meta/boards.json").catch(() => null),
+      readJSON("data/funds.json").catch(() => null),
+      readJSON("data/cbonds.json").catch(() => null),
+      readJSON("data/meta/insider_buys.json").catch(() => null),
+      readJSON("data/meta/dma_low30.json").catch(() => null),
     ]);
-    const snapshotItems = Array.isArray(snap.items)
-      ? snap.items.filter((s) => !isExcludedCode(s && s.code)) : [];
+    if (!snap || !Array.isArray(snap.items)) throw new Error("股票快照格式不正确");
+    const snapshotItems = snap.items.filter((s) => s && !isExcludedCode(s.code));
     state.snapshot = Object.assign({}, snap, {
       total: snapshotItems.length, items: snapshotItems,
     });
     state.stocks = snapshotItems;
-    state.boards = (b && b.boards) || [];
-    state.funds = (fnd && fnd.items) || [];
-    state.cbonds = (cbd && cbd.listed) ? cbd : { listed: [], pending: [] };
+    state.boards = b && Array.isArray(b.boards) ? b.boards : [];
+    state.funds = fnd && Array.isArray(fnd.items) ? fnd.items : [];
+    state.cbonds = Object.assign({}, cbd, { listed: cbd && Array.isArray(cbd.listed) ? cbd.listed : [],
+      pending: cbd && Array.isArray(cbd.pending) ? cbd.pending : [] });
     state.insiders = ins && Array.isArray(ins.items)
       ? ins.items.filter((x) => !isExcludedCode(x && x.code)) : [];
     state.dmaLow30 = dma && Array.isArray(dma.items) ? Object.assign({}, dma, {
@@ -99,7 +152,8 @@ async function load() {
 
 // CI 生成的 updated_at 为 UTC（GitHub Actions 默认时区），转为北京时间显示
 function toBJ(s) {
-  const t = Date.parse((s || "").replace(" ", "T") + "Z");
+  const value = (s || "").replace(" ", "T");
+  const t = Date.parse(/Z$|[+-]\d{2}:?\d{2}$/i.test(value) ? value : value + "Z");
   if (isNaN(t)) return (s || "").replace("T", " ").slice(0, 16);
   const d = new Date(t + 8 * 3600 * 1000);
   const p = (n) => String(n).padStart(2, "0");
@@ -172,7 +226,7 @@ function stockRowHTML(s) {
     <td class="num">${fmt(s.roe)}</td>
     <td class="num ${mc(s.exp_ret)}">${m(s.exp_ret)}</td>
     <td class="num ${mc(s.exp_ret_pb5)}">${m(s.exp_ret_pb5)}</td>
-    <td>${s.industry || "—"}</td><td>${tags}</td></tr>`;
+    <td>${esc(s.industry || "—")}</td><td>${tags}</td></tr>`;
 }
 
 function renderList() {
@@ -205,8 +259,8 @@ function renderBoards() {
     const pct = b.pct === null || b.pct === undefined ? null : Number(b.pct);
     const cls = pct > 0 ? "red" : pct < 0 ? "green" : "";
     const txt = pct === null ? "—" : (pct > 0 ? "+" : "") + fmt(pct);
-    return `<tr data-ind="${b.name}">
-      <td>${b.name}</td><td class="num">${fmt(b.mv_b, 1)}</td>
+    return `<tr data-ind="${esc(b.name)}">
+      <td>${esc(b.name)}</td><td class="num">${fmt(b.mv_b, 1)}</td>
       <td class="num">${b.count}</td><td class="num">${fmt(b.avg_dy)}</td>
       <td class="num">${fmt(b.avg_pe)}</td><td class="num">${fmt(b.avg_roe)}</td>
       <td class="num ${cls}">${txt}</td></tr>`;
@@ -221,6 +275,9 @@ function renderBoards() {
 }
 
 function showView(name) {
+  if (state.view !== name) {
+    ++state.detailRequest; ++state.hkDetailRequest; ++state.fundDetailRequest;
+  }
   ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
    "hk", "hk-detail", "social", "soe", "watchlist"].forEach((v) => {
     const el = $("#view-" + v);
@@ -235,12 +292,21 @@ function showView(name) {
   $("#tab-soe").classList.toggle("active", name === "soe");
   $("#tab-watch").classList.toggle("active", name === "watchlist");
   state.view = name;
+  const searchKey = { list: "search", detail: "search", tag: "search", boards: "boardsSearch",
+    funds: "fundSearch", "fund-detail": "fundSearch", hk: "hkSearch", "hk-detail": "hkSearch",
+    cbonds: "cbondsSearch", social: "socialSearch", soe: "soeSearch", watchlist: "watchSearch" }[name];
+  if (searchKey && $("#search")) $("#search").value = state[searchKey] || "";
   window.scrollTo(0, 0);
 }
 
 async function openDetail(code) {
   showView("detail");
+  const requestId = ++state.detailRequest;
   state.current = code;
+  state.k = state.raw = state.h = null;
+  resetChart("chart", "#chart", "K线数据加载中…");
+  const oldNote = $("#merged-kline-date");
+  if (oldNote) oldNote.textContent = "";
   state.finGran = "annual";
   state.finKey = null;
   const it = state.stocks.find((x) => x.code === code) || {};
@@ -255,13 +321,15 @@ async function openDetail(code) {
   renderCards(it);
   state.trendCharts.forEach((c) => c && c.dispose());
   state.trendCharts = [];
+  $("#trends").innerHTML = "";
+  const companyPromise = loadCompany(code, 0, requestId);
   const [k, h, dv, rw] = await Promise.all([
-    fetch("data/kline/" + code + ".json").then((r) => r.json()).catch(() => null),
-    fetch("data/history/" + code + ".json").then((r) => r.json()).catch(() => null),
-    fetch("data/dividends/" + code + ".json").then((r) => r.json()).catch(() => null),
-    fetch("data/kline_raw/" + code + ".json").then((r) => r.json()).catch(() => null),
+    readJSON("data/kline/" + code + ".json").catch(() => null),
+    readJSON("data/history/" + code + ".json").catch(() => null),
+    readJSON("data/dividends/" + code + ".json").catch(() => null),
+    readJSON("data/kline_raw/" + code + ".json").catch(() => null),
   ]);
-  if (state.current !== code) return;
+  if (state.current !== code || state.detailRequest !== requestId || state.view !== "detail") return;
   state.k = k;
   state.h = h;
   state.raw = rw;
@@ -284,10 +352,12 @@ async function openDetail(code) {
   // 图表渲染异常不能阻断公司信息加载
   try { renderChart(); } catch (e) { console.error("renderChart:", e); }
   try { renderTrends(h); } catch (e) { console.error("renderTrends:", e); }
-  loadCompany(code);
+  await companyPromise;
 }
 
-async function loadCompany(code, attempt = 0) {
+async function loadCompany(code, attempt = 0, requestId = state.detailRequest) {
+  const active = () => state.detailRequest === requestId && state.current === code && state.view === "detail";
+  if (!active()) return;
   const loading = $("#ci-loading");
   const body = $("#ci-body");
   if (!loading || !body) return;
@@ -296,17 +366,19 @@ async function loadCompany(code, attempt = 0) {
   body.hidden = true;
   state.company = null;
   try {
-    const d = await fetch("data/company/" + code + ".json").then((r) => r.json());
+    const d = await readJSON("data/company/" + code + ".json");
+    if (!active()) return;
     if (!d || typeof d !== "object") throw new Error("空数据");
     state.company = d;
     renderCompany(d);
     loading.hidden = true;
     body.hidden = false;
   } catch (e) {
-    if (attempt === 0) {
-      // 首次失败自动重试一次（应对瞬时加载问题）
+    if (!active()) return;
+    if (attempt === 0 && (e.status == null || e.status >= 500)) {
+      // Retry transient failures; a missing static file cannot recover by waiting.
       await new Promise((r) => setTimeout(r, 400));
-      loadCompany(code, 1);
+      await loadCompany(code, 1, requestId);
       return;
     }
     loading.textContent = "公司基本面数据暂不可用（" + code + "：" + e.message + "）。";
@@ -333,62 +405,65 @@ function renderCards(it) {
 }
 
 function ma(bars, n) {
-  return bars.map((b, i) =>
-    i < n - 1 ? null : +((bars.slice(i - n + 1, i + 1).reduce((s, x) => s + x.c, 0) / n).toFixed(2))
-  );
-}
-
-function boll(bars, n = 20, k = 2) {
-  return bars.map((b, i) => {
-    if (i < n - 1) return null;
-    const win = bars.slice(i - n + 1, i + 1);
-    const m = win.reduce((s, x) => s + x.c, 0) / n;
-    const v = win.reduce((s, x) => s + (x.c - m) * (x.c - m), 0) / n;
-    const sd = Math.sqrt(v);
-    return [+(m + k * sd).toFixed(2), +m.toFixed(2), +(m - k * sd).toFixed(2)];
+  let sum = 0;
+  return bars.map((bar, i) => {
+    sum += bar.c;
+    if (i >= n) sum -= bars[i - n].c;
+    return i < n - 1 ? null : +(sum / n).toFixed(2);
   });
 }
 
+function boll(bars, n = 20, k = 2) {
+  let mean = 0, m2 = 0, count = 0;
+  return bars.map((bar, i) => {
+    if (count === n) {
+      const old = bars[i - n].c;
+      const nextMean = (count * mean - old) / (count - 1);
+      m2 -= (old - mean) * (old - nextMean);
+      mean = nextMean;
+      --count;
+    }
+    ++count;
+    const delta = bar.c - mean;
+    mean += delta / count;
+    m2 += delta * (bar.c - mean);
+    if (count < n) return null;
+    const sd = Math.sqrt(Math.max(0, m2 / n));
+    return [+(mean + k * sd).toFixed(2), +mean.toFixed(2), +(mean - k * sd).toFixed(2)];
+  });
+}
+
+// Wilder DMI: directional movement uses yesterday's high/low, not its close.
+// DI starts at n; the first ADX averages n valid DX observations at 2*n-1.
 function dmi(bars, n = 14) {
-  const tr = [], pdm = [], ndm = [];
-  for (let i = 0; i < bars.length; i++) {
-    if (i === 0) { tr.push(0); pdm.push(0); ndm.push(0); continue; }
-    const h = bars[i].h, l = bars[i].l, pc = bars[i - 1].c;
-    tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
-    const up = h - pc, dn = pc - l;
-    pdm.push(up > dn && up > 0 ? up : 0);
-    ndm.push(dn > up && dn > 0 ? dn : 0);
-  }
-  const atr = [], pdi = [], ndi = [], dx = [];
-  let a = 0, sp = 0, sn = 0;
-  for (let i = 0; i < bars.length; i++) {
+  const pdi = Array(bars.length).fill(null);
+  const ndi = Array(bars.length).fill(null);
+  const adx = Array(bars.length).fill(null);
+  let trSum = 0, plusSum = 0, minusSum = 0, dxSum = 0, ad = 0;
+  for (let i = 1; i < bars.length; ++i) {
+    const bar = bars[i], previous = bars[i - 1];
+    const tr = Math.max(bar.h - bar.l, Math.abs(bar.h - previous.c), Math.abs(bar.l - previous.c));
+    const up = bar.h - previous.h, down = previous.l - bar.l;
+    const plus = up > down && up > 0 ? up : 0;
+    const minus = down > up && down > 0 ? down : 0;
     if (i < n) {
-      a += tr[i]; sp += pdm[i]; sn += ndm[i];
-      if (i === n - 1) { a /= n; sp /= n; sn /= n; }
-    } else {
-      a = (a * (n - 1) + tr[i]) / n;
-      sp = (sp * (n - 1) + pdm[i]) / n;
-      sn = (sn * (n - 1) + ndm[i]) / n;
+      trSum += tr; plusSum += plus; minusSum += minus;
+      continue;
     }
-    atr.push(a); pdi.push(a ? 100 * sp / a : 0); ndi.push(a ? 100 * sn / a : 0);
-    dx.push(pdi[i] + ndi[i] > 0 ? 100 * Math.abs(pdi[i] - ndi[i]) / (pdi[i] + ndi[i]) : 0);
-  }
-  const adx = [];
-  let ad = 0;
-  for (let i = 0; i < bars.length; i++) {
+    trSum += tr - trSum / n;
+    plusSum += plus - plusSum / n;
+    minusSum += minus - minusSum / n;
+    const pd = trSum ? 100 * plusSum / trSum : 0;
+    const nd = trSum ? 100 * minusSum / trSum : 0;
+    pdi[i] = +pd.toFixed(2); ndi[i] = +nd.toFixed(2);
+    const dx = pd + nd ? 100 * Math.abs(pd - nd) / (pd + nd) : 0;
     if (i < 2 * n) {
-      ad += dx[i];
-      if (i === 2 * n - 1) ad /= n;
-    } else {
-      ad = (ad * (n - 1) + dx[i]) / n;
-    }
-    adx.push(i < 2 * n - 1 ? null : +ad.toFixed(2));
+      dxSum += dx;
+      if (i === 2 * n - 1) ad = dxSum / n;
+    } else ad = (ad * (n - 1) + dx) / n;
+    if (i >= 2 * n - 1) adx[i] = +ad.toFixed(2);
   }
-  return {
-    pdi: pdi.map((v, i) => (i < n - 1 ? null : +v.toFixed(2))),
-    ndi: ndi.map((v, i) => (i < n - 1 ? null : +v.toFixed(2))),
-    adx,
-  };
+  return { pdi, ndi, adx };
 }
 
 function line(name, data, color, width = 1) {
@@ -439,6 +514,26 @@ function selectKlineData(adjusted, raw, mode) {
   return { bars: [], note: "K线数据尚未获取，等待补齐" };
 }
 
+const klineDerived = new WeakMap();
+function prepareKlineData(source, period) {
+  let periods = klineDerived.get(source);
+  if (!periods) { periods = new Map(); klineDerived.set(source, periods); }
+  if (periods.has(period)) return periods.get(period);
+  const bars = period === "day" ? source : aggregateBars(source, period);
+  const indicators = new Map();
+  const cached = (key, calculate) => {
+    if (!indicators.has(key)) indicators.set(key, calculate());
+    return indicators.get(key);
+  };
+  const data = { bars, dates: bars.map((b) => b.d),
+    ohlc: bars.map((b) => [b.o, b.c, b.l, b.h]), vol: bars.map((b) => b.v),
+    ma: (n) => cached("ma" + n, () => ma(bars, n)),
+    boll: () => cached("boll", () => boll(bars)),
+    dmi: () => cached("dmi", () => dmi(bars)) };
+  periods.set(period, data);
+  return data;
+}
+
 function renderChart() {
   const el = $("#chart");
   const selected = selectKlineData(state.k, state.raw, state.kMode);
@@ -452,14 +547,10 @@ function renderChart() {
   if (!state.chart) {
     el.innerHTML = "";
     state.chart = echarts.init(el);
-    window.addEventListener("resize", () => state.chart && state.chart.resize());
   }
-  let bars = selected.bars;
-  if (state.kPeriod !== "day") bars = aggregateBars(bars, state.kPeriod);
+  const derived = prepareKlineData(selected.bars, state.kPeriod);
+  const { bars, dates, ohlc, vol } = derived;
   const zoomStart = Math.max(0, 100 - 120 / bars.length * 100); // 默认显示近约半年
-  const dates = bars.map((b) => b.d);
-  const ohlc = bars.map((b) => [b.o, b.c, b.l, b.h]);
-  const vol = bars.map((b) => b.v);
   const showMA = $("#ck-ma").checked;
   const showB = $("#ck-boll").checked;
   const showD = $("#ck-dmi").checked;
@@ -483,12 +574,12 @@ function renderChart() {
   }];
   const legend = ["K线"];
   if (showMA) {
-    [["MA5", ma(bars, 5), "#f6a800"], ["MA10", ma(bars, 10), "#e0439e"],
-     ["MA20", ma(bars, 20), "#1e5eff"], ["MA60", ma(bars, 60), "#7b1fa2"]]
+    [["MA5", derived.ma(5), "#f6a800"], ["MA10", derived.ma(10), "#e0439e"],
+     ["MA20", derived.ma(20), "#1e5eff"], ["MA60", derived.ma(60), "#7b1fa2"]]
       .forEach(([n, d, c]) => { series.push(line(n, d, c)); legend.push(n); });
   }
   if (showB) {
-    const bl = boll(bars);
+    const bl = derived.boll();
     [["BOLL上", bl.map((x) => x && x[0]), "#f57c00"],
      ["BOLL中", bl.map((x) => x && x[1]), "#f9a825"],
      ["BOLL下", bl.map((x) => x && x[2]), "#f57c00"]]
@@ -496,12 +587,12 @@ function renderChart() {
   }
   let sub;
   if (showD) {
-    const dm = dmi(bars);
+    const dm = derived.dmi();
     sub = [
       line("+DI", dm.pdi, "#e53935"),
       line("-DI", dm.ndi, "#43a047"),
       line("ADX", dm.adx, "#1e88e5"),
-    ];
+    ].map((item) => Object.assign(item, { xAxisIndex: 1, yAxisIndex: 1 }));
     legend.push("+DI", "-DI", "ADX");
   } else {
     sub = [{
@@ -681,6 +772,7 @@ function getFinChart() {
   const el = $("#finance-chart");
   let c = echarts.getInstanceByDom(el);
   if (!c) c = echarts.init(el);
+  state.finChart = c;
   return c;
 }
 
@@ -863,22 +955,17 @@ const HK_FIN_ROWS = [
   ["roic", "投入资本回报率", "%"],
 ];
 
-async function loadHk() {
-  if (state.hkLoaded) return;
-  state.hkLoaded = true;
-  try {
-    const snap = await fetch("data/hk/snapshot.json").then((r) => r.json());
+function loadHk() {
+  return loadOnce("hkLoaded", "港股通", async () => {
+    const snap = await readJSON("data/hk/snapshot.json");
+    if (!snap || !Array.isArray(snap.items)) throw new Error("港股快照格式不正确");
     state.hkSnap = snap;
-    state.hkStocks = snap.items || [];
+    state.hkStocks = snap.items;
     state.hkPy = new Map();
     state.hkStocks.forEach((s) => state.hkPy.set(s.code, initials(s.name || "")));
     const meta = $("#meta");
-    if (meta && snap.total) {
-      meta.textContent += " · 港股通 " + snap.total + " 只";
-    }
-  } catch (e) {
-    console.error("港股通数据加载失败:", e);
-  }
+    if (meta && snap.total) meta.textContent += " · 港股通 " + snap.total + " 只";
+  });
 }
 
 function hkFiltered() {
@@ -928,7 +1015,7 @@ function hkRowHTML(s) {
     <td class="num">${fmt(s.mv, 1)}</td>
     <td class="num">${fmt(s.roe)}</td>
     <td class="num ${mc(s.ytd)}">${m(s.ytd)}</td>
-    <td>${s.industry || "—"}</td></tr>`;
+    <td>${esc(s.industry || "—")}</td></tr>`;
 }
 
 function renderHkList() {
@@ -1011,7 +1098,10 @@ function renderHkCards(it) {
 
 async function openHkDetail(code) {
   showView("hk-detail");
+  const requestId = ++state.hkDetailRequest;
   state.hkCurrent = code;
+  state.hkK = state.hkRaw = null;
+  resetChart("hkChart", "#hk-chart", "K线数据加载中…");
   state.hkFinGran = "annual";
   state.hkFinKey = null;
   state.hkCompany = null;
@@ -1027,10 +1117,11 @@ async function openHkDetail(code) {
   }
   renderHkCards(it);
   const [k, rw, comp] = await Promise.all([
-    fetch("data/hk/kline/" + code + ".json").then((r) => r.json()).catch(() => null),
-    fetch("data/hk/kline_raw/" + code + ".json").then((r) => r.json()).catch(() => null),
-    fetch("data/hk/company/" + code + ".json").then((r) => r.json()).catch(() => null),
+    readJSON("data/hk/kline/" + code + ".json").catch(() => null),
+    readJSON("data/hk/kline_raw/" + code + ".json").catch(() => null),
+    readJSON("data/hk/company/" + code + ".json").catch(() => null),
   ]);
+  if (state.hkCurrent !== code || state.hkDetailRequest !== requestId || state.view !== "hk-detail") return;
   state.hkK = k;
   state.hkRaw = rw;
   state.hkCompany = comp;
@@ -1045,28 +1136,18 @@ async function openHkDetail(code) {
 function hkRenderChart() {
   const el = $("#hk-chart");
   if (!el) return;
-  if (!state.hkK || !state.hkK.bars || !state.hkK.bars.length) {
-    el.innerHTML = '<div class="muted" style="padding:20px">暂无K线数据</div>';
+  const selected = selectKlineData(state.hkK, state.hkRaw, state.hkMode);
+  const fqNote = $("#hk-fq-note");
+  if (fqNote) fqNote.textContent = (selected.note ? selected.note + " · " : "") +
+    "K线数据截至：" + (selected.bars.length ? selected.bars[selected.bars.length - 1].d : "—");
+  if (!selected.bars.length) {
+    resetChart("hkChart", "#hk-chart", "K线数据尚未获取，等待补齐");
     return;
   }
-  if (!state.hkChart) {
-    state.hkChart = echarts.init(el);
-    window.addEventListener("resize", () => state.hkChart.resize());
-  }
-  let bars = state.hkK.bars;
-  const rawBars = state.hkRaw && state.hkRaw.bars && state.hkRaw.bars.length
-    ? state.hkRaw.bars : null;
-  if (state.hkMode === "raw" && rawBars) bars = rawBars;
-  const fqNote = $("#hk-fq-note");
-  if (fqNote) {
-    fqNote.textContent = (state.hkMode === "raw" && !rawBars)
-      ? "未复权数据未生成，暂显示前复权" : "";
-  }
-  if (state.hkPeriod !== "day") bars = aggregateBars(bars, state.hkPeriod);
+  if (!state.hkChart) { el.innerHTML = ""; state.hkChart = echarts.init(el); }
+  const derived = prepareKlineData(selected.bars, state.hkPeriod);
+  const { bars, dates, ohlc, vol } = derived;
   const zoomStart = Math.max(0, 100 - 120 / bars.length * 100);
-  const dates = bars.map((b) => b.d);
-  const ohlc = bars.map((b) => [b.o, b.c, b.l, b.h]);
-  const vol = bars.map((b) => b.v);
   const showMA = $("#hk-ck-ma").checked;
   const showB = $("#hk-ck-boll").checked;
   const showD = $("#hk-ck-dmi").checked;
@@ -1089,12 +1170,12 @@ function hkRenderChart() {
   }];
   const legend = ["K线"];
   if (showMA) {
-    [["MA5", ma(bars, 5), "#f6a800"], ["MA10", ma(bars, 10), "#e0439e"],
-     ["MA20", ma(bars, 20), "#1e5eff"], ["MA60", ma(bars, 60), "#7b1fa2"]]
+    [["MA5", derived.ma(5), "#f6a800"], ["MA10", derived.ma(10), "#e0439e"],
+     ["MA20", derived.ma(20), "#1e5eff"], ["MA60", derived.ma(60), "#7b1fa2"]]
       .forEach(([n, d, c]) => { series.push(line(n, d, c)); legend.push(n); });
   }
   if (showB) {
-    const bl = boll(bars);
+    const bl = derived.boll();
     [["BOLL上", bl.map((x) => x && x[0]), "#f57c00"],
      ["BOLL中", bl.map((x) => x && x[1]), "#f9a825"],
      ["BOLL下", bl.map((x) => x && x[2]), "#f57c00"]]
@@ -1102,12 +1183,12 @@ function hkRenderChart() {
   }
   let sub;
   if (showD) {
-    const dm = dmi(bars);
+    const dm = derived.dmi();
     sub = [
       line("+DI", dm.pdi, "#e53935"),
       line("-DI", dm.ndi, "#43a047"),
       line("ADX", dm.adx, "#1e88e5"),
-    ];
+    ].map((item) => Object.assign(item, { xAxisIndex: 1, yAxisIndex: 1 }));
     legend.push("+DI", "-DI", "ADX");
   } else {
     sub = [{
@@ -1263,7 +1344,6 @@ function renderHkFinChart(fin) {
   const row = HK_FIN_ROWS.find((r) => r[0] === k) || [k, k, ""];
   if (!state.hkFinChart) {
     state.hkFinChart = echarts.init(el);
-    window.addEventListener("resize", () => state.hkFinChart && state.hkFinChart.resize());
   }
   state.hkFinChart.setOption({
     animation: false,
@@ -1282,20 +1362,14 @@ function renderHkFinChart(fin) {
 }
 
 // ==================== 社保基金调仓 ====================
-async function loadSocial() {
-  if (state.socialLoaded) return;
-  state.socialLoaded = true;
-  try {
-    const d = await fetch("data/meta/social_security.json").then((r) => r.json());
-    state.social = d || { items: [] };
+function loadSocial() {
+  return loadOnce("socialLoaded", "社保基金", async () => {
+    const d = await readJSON("data/meta/social_security.json");
+    if (!d || !Array.isArray(d.items)) throw new Error("社保数据格式不正确");
+    state.social = d;
     const meta = $("#meta");
-    if (meta && d && d.total) {
-      meta.textContent += " · 社保调仓 " +
-        (d.total.inc || 0) + "增/" + (d.total.dec || 0) + "减";
-    }
-  } catch (e) {
-    console.error("社保基金数据加载失败:", e);
-  }
+    if (meta && d.total) meta.textContent += " · 社保调仓 " + (d.total.inc || 0) + "增/" + (d.total.dec || 0) + "减";
+  });
 }
 
 function socialFiltered(dir) {
@@ -1418,21 +1492,15 @@ function renderSocial() {
 }
 
 // ==================== 国资红利（央企/地方国企/政府部门） ====================
-async function loadSoe() {
-  if (state.soeLoaded) return;
-  state.soeLoaded = true;
-  try {
-    const d = await fetch("data/meta/soe.json").then((r) => r.json());
-    state.soe = d || { items: [] };
+function loadSoe() {
+  return loadOnce("soeLoaded", "国资红利", async () => {
+    const d = await readJSON("data/meta/soe.json");
+    if (!d || !Array.isArray(d.items)) throw new Error("国资数据格式不正确");
+    state.soe = d;
     const meta = $("#meta");
-    if (meta && d && d.total) {
-      meta.textContent += " · 国资红利 " +
-        ((d.total["央企"] || 0) + (d.total["地方国企"] || 0) +
-         (d.total["政府部门"] || 0)) + " 只";
-    }
-  } catch (e) {
-    console.error("国资红利数据加载失败:", e);
-  }
+    if (meta && d.total) meta.textContent += " · 国资红利 " +
+      ((d.total["央企"] || 0) + (d.total["地方国企"] || 0) + (d.total["政府部门"] || 0)) + " 只";
+  });
 }
 
 function soeFiltered() {
@@ -1500,7 +1568,7 @@ function loadWatch() {
   try {
     const raw = localStorage.getItem(WATCH_KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    return Array.isArray(arr) ? arr.filter((w) => w && typeof w === "object" && /^\d{6}$/.test(w.code)) : [];
   } catch (e) { return []; }
 }
 
@@ -1658,6 +1726,18 @@ function renderWatchlist() {
 
 function route() {
   const h = location.hash || "#/";
+  const detailRoute = h.match(/^#\/(stock|fund|hk|tag)\/(.*)$/);
+  if (detailRoute) {
+    let code;
+    try { code = decodeURIComponent(detailRoute[2]); } catch (e) { code = ""; }
+    const valid = detailRoute[1] === "tag" ? Boolean(code) :
+      (detailRoute[1] === "hk" ? /^\d{5}$/ : /^\d{6}$/).test(code);
+    if (!valid) {
+      showView("list");
+      $("#list-info").textContent = "链接中的代码或标签无效，请从列表重新选择。";
+      return;
+    }
+  }
   if (h.startsWith("#/watch")) {
     renderWatchlist();
     showView("watchlist");
@@ -1665,6 +1745,7 @@ function route() {
   }
   if (h.startsWith("#/soe")) {
     loadSoe().then(() => {
+      if ((location.hash || "#/") !== h) return;
       renderSoe();
       showView("soe");
     });
@@ -1672,17 +1753,19 @@ function route() {
   }
   if (h.startsWith("#/social")) {
     loadSocial().then(() => {
+      if ((location.hash || "#/") !== h) return;
       renderSocial();
       showView("social");
     });
     return;
   }
   if (h.startsWith("#/hk/")) {
-    loadHk().then(() => openHkDetail(decodeURIComponent(h.slice(5))));
+    loadHk().then(() => { if ((location.hash || "#/") === h) openHkDetail(decodeURIComponent(h.slice(5))); });
     return;
   }
   if (h.startsWith("#/hk")) {
     loadHk().then(() => {
+      if ((location.hash || "#/") !== h) return;
       renderHkList();
       try { renderHkRankings(); } catch (e) { /* 榜单异常不影响列表 */ }
       showView("hk");
@@ -2067,6 +2150,8 @@ function renderFunds() {
 
 async function openFundDetail(code) {
   showView("fund-detail");
+  const requestId = ++state.fundDetailRequest;
+  resetChart("fundChart", "#fd-chart", "净值数据加载中…");
   const it = state.funds.find((x) => x.code === code) || {};
   state.fundCurrent = it;
   $("#fd-title").textContent = (it.name || code) + " (" + code + ")";
@@ -2076,11 +2161,15 @@ async function openFundDetail(code) {
     " · 近12月分红 " + (it.div_count == null ? "—" : it.div_count) + " 次" +
     " · 当前规模 " + (it.scale_now == null ? "—" : fmt(it.scale_now, 2) + " 亿");
   try {
-    const d = await fetch("data/fund_nav/" + code + ".json").then((r) => r.json());
+    const d = await readJSON("data/fund_nav/" + code + ".json");
+    if (state.fundDetailRequest !== requestId || state.view !== "fund-detail") return;
+    if (d && Array.isArray(d.nav) && d.nav.length) {
+      $("#fd-sub").textContent += " · 净值曲线截至 " + d.nav[d.nav.length - 1][0];
+    }
     renderFundNav(d);
   } catch (e) {
-    const el = $("#fd-chart");
-    if (el) el.innerHTML = '<div class="muted" style="padding:20px">暂无净值走势数据</div>';
+    if (state.fundDetailRequest !== requestId || state.view !== "fund-detail") return;
+    resetChart("fundChart", "#fd-chart", "暂无净值走势数据");
   }
 }
 
@@ -2088,12 +2177,11 @@ function renderFundNav(d) {
   const el = $("#fd-chart");
   if (!el) return;
   if (!d || !d.nav || !d.nav.length) {
-    el.innerHTML = '<div class="muted" style="padding:20px">暂无净值走势数据</div>';
+    resetChart("fundChart", "#fd-chart", "暂无净值走势数据");
     return;
   }
   if (!state.fundChart) {
     state.fundChart = echarts.init(el);
-    window.addEventListener("resize", () => state.fundChart && state.fundChart.resize());
   }
   const dates = d.nav.map((x) => x[0]);
   const vals = d.nav.map((x) => x[1]);
@@ -2136,10 +2224,18 @@ function pinTableHeaders() {
     }
   });
 }
-window.addEventListener("scroll", () => requestAnimationFrame(pinTableHeaders), { passive: true });
+let pinHeadersFrame = 0;
+window.addEventListener("scroll", () => {
+  if (pinHeadersFrame) return;
+  pinHeadersFrame = requestAnimationFrame(() => { pinHeadersFrame = 0; pinTableHeaders(); });
+}, { passive: true });
 window.addEventListener("resize", pinTableHeaders);
 
 function setupEvents() {
+  window.addEventListener("resize", () => {
+    [state.chart, state.hkChart, state.fundChart, state.finChart, state.hkFinChart, ...state.trendCharts]
+      .forEach((chart) => { if (chart) chart.resize(); });
+  });
   // 表格容器滚轮处理：鼠标在列表上「上下滚动」→ 列表左右平移看指标；
   // 左右手势/横滑 → 表格上下翻行；无横向溢出的小表保持页面滚动。
   document.querySelectorAll(".table-wrap").forEach((wrap) => {
@@ -2201,6 +2297,13 @@ function setupEvents() {
       (s) => (s.name || "").replace(/\s+/g, "").toLowerCase() === q
         || (s.code || "").toLowerCase() === q
     );
+    if (state.view === "funds" || state.view === "fund-detail") {
+      const hit = exact(state.funds);
+      if (hit) { e.preventDefault(); location.hash = "#/fund/" + hit.code; }
+      return;
+    }
+    const searchView = state.view;
+    const searchValue = e.target.value;
     const ahit = exact(state.stocks);
     if (ahit) {
       e.preventDefault();
@@ -2208,6 +2311,7 @@ function setupEvents() {
       return;
     }
     await loadHk();
+    if (state.view !== searchView || e.target.value !== searchValue) return;
     const hhit = exact(state.hkStocks);
     if (hhit) {
       e.preventDefault();
