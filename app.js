@@ -1882,7 +1882,7 @@ function renderRankings() {
     } else {
       const smap = new Map(all.map((s) => [s.code, s]));
       body = `<div class="rank-dma-scroll"><table class="rank-dma-table">` +
-        `<thead><tr><th>名称(代码)</th><th class="num">白线(DIF)</th>` +
+        `<thead><tr><th>名称(代码)</th><th class="num">股息率TTM%</th><th class="num">白线(DIF)</th>` +
         `<th class="num">历史30%分位</th><th class="num">当前分位数</th>` +
         `<th class="num">样本数</th></tr></thead><tbody>` +
         rows.map((x) => {
@@ -1895,6 +1895,7 @@ function renderRankings() {
           const currentPctText = currentPct == null ? "—" : fmt(currentPct, 1) + "%";
           const samples = x.samples ?? x.dma_samples;
           return `<tr data-code="${esc(code)}"><td class="dma-name">${esc(name)}(${esc(code)})</td>` +
+            `<td class="num">${fmt(stock.dy)}</td>` +
             `<td class="num">${fmt(white, 4)}</td><td class="num">${fmt(threshold, 4)}</td>` +
             `<td class="num">${currentPctText}</td><td class="num">${fmt(samples, 0)}</td></tr>`;
         }).join("") + `</tbody></table></div>`;
