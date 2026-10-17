@@ -60,6 +60,7 @@ def _month_end_series(bars):
 
 # 首页筛选：现价站上 60 月均、溢价不超过 10%，现价处于近 12 根月线收盘的最低水平，
 # 且这 12 根里没有任何一根月末收盘跌破截至该月的滚动 60 月均。
+# 价格口径：不复权（bfq）月末收盘，与东财「不复权」月 K 的 MA60 对齐。
 MA60_MONTHS = 60
 MA60_PREMIUM_MAX = 0.10
 YEAR_LOW_MONTHS = 12
@@ -121,8 +122,9 @@ def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTH
     """用月末收盘序列筛选。月份不足时返回 None。
 
     月线收盘沿用 _month_end_series：每个自然月取最后一根日 K 收盘，
-    当前月用最新收盘。MA 与现价使用同一复权口径（每日流水线传入前复权日 K，
-    最新一根前复权收盘与实际现价对齐）。
+    当前月用最新收盘。MA、溢价、近一年最低与近一年跌破使用同一价格序列。
+    首页这张表由每日流水线传入不复权日 K（data/kline_raw，price_basis=bfq），
+    最新一根不复权收盘与不复权现价对齐。其它仍用前复权的指标不要改走这条序列。
     近一年最低取最近 year_months 根月线收盘的最小值（含当前月，按根数而非
     再切日历窗口；中间缺月时 12 根可能跨过 12 个自然月）。
     近一年未跌破：这 year_months 根中，只要有一根月末收盘 < 截至该月的滚动
@@ -155,12 +157,17 @@ def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTH
     }
 
 
-def build_ma60_year_low_payload(items, klines, trade_date):
-    """从最新快照股票与 K 线写出首页筛选表。"""
+def build_ma60_year_low_payload(items, raw_klines, trade_date):
+    """从最新快照股票与不复权日 K（raw_klines）写出首页筛选表。
+
+    每日更新在写出 data/meta/ma60_year_low.json 时调用本函数。
+    raw_klines 必须是不复权（bfq）日 K，与 data/kline_raw 同一口径；
+    不要传入前复权 klines。
+    """
     rows = []
     for it in items or []:
         code = it.get("code")
-        stats = screen_ma60_year_low((klines or {}).get(code) or [])
+        stats = screen_ma60_year_low((raw_klines or {}).get(code) or [])
         if not stats or not stats["matched"]:
             continue
         dy = it.get("dy")
@@ -192,7 +199,7 @@ def build_ma60_year_low_payload(items, klines, trade_date):
             "year_low_abs_tol": YEAR_LOW_ABS_TOL,
             "year_low_rel_tol": YEAR_LOW_REL_TOL,
             "month_close": "month_end",
-            "price_basis": "qfq",
+            "price_basis": "bfq",
             # 近一年任意一根月末收盘 < 截至该月的滚动 MA60 则剔除；贴平不算。
             "exclude_year_close_below_ma": True,
         },
@@ -968,10 +975,12 @@ def main():
                    "params": {"short": 5, "long": 89, "signal": 36,
                               "percentile": 0.30},
                    "items": dma_items}, f, ensure_ascii=False)
-    ma60_payload = build_ma60_year_low_payload(items, klines, trade_date)
+    # 首页 MA60 年低表只用不复权月线；前复权 klines 仍供涨跌幅、DMA 等其它指标。
+    ma60_payload = build_ma60_year_low_payload(items, raw_klines, trade_date)
     with open(os.path.join(meta_dir, "ma60_year_low.json"), "w", encoding="utf-8") as f:
         json.dump(ma60_payload, f, ensure_ascii=False)
-    print("   近一年未跌破60月均、溢价≤10%且月线最低: %d 只" % len(ma60_payload["items"]),
+    print("   近一年未跌破60月均、溢价≤10%且月线最低(不复权): %d 只"
+          % len(ma60_payload["items"]),
           flush=True)
 
     # Each successfully refreshed price series was already persisted above.

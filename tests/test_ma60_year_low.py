@@ -1,4 +1,8 @@
-"""60月均溢价、近一年未跌破与近一年月线最低筛选。"""
+"""60月均溢价、近一年未跌破与近一年月线最低筛选。
+
+筛选本身不区分复权：传入哪套日 K，月末收盘、MA60、溢价和跌破就用哪套。
+每日流水线传入不复权日 K（bfq，data/kline_raw），payload 的 price_basis 为 "bfq"。
+"""
 import unittest
 
 from pipeline.update_daily import (
@@ -100,6 +104,7 @@ class Ma60YearLowTests(unittest.TestCase):
         self.assertEqual(payload["params"]["ma_months"], 60)
         self.assertEqual(payload["params"]["year_months"], 12)
         self.assertEqual(payload["params"]["month_close"], "month_end")
+        self.assertEqual(payload["params"]["price_basis"], "bfq")
         self.assertTrue(payload["params"]["exclude_year_close_below_ma"])
         codes = [row["code"] for row in payload["items"]]
         self.assertEqual(codes, ["000001", "000002"])
