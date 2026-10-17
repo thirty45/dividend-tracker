@@ -58,7 +58,8 @@ def _month_end_series(bars):
     return [(ym, ms[ym]) for ym in sorted(ms.keys())]
 
 
-# 首页筛选：已站上 60 月均、溢价不超过 10%，且现价处于近 12 根月线收盘的最低水平。
+# 首页筛选：现价站上 60 月均、溢价不超过 10%，现价处于近 12 根月线收盘的最低水平，
+# 且这 12 根里没有任何一根月末收盘跌破截至该月的滚动 60 月均。
 MA60_MONTHS = 60
 MA60_PREMIUM_MAX = 0.10
 YEAR_LOW_MONTHS = 12
@@ -89,8 +90,34 @@ def _near_year_month_low(close, year_low):
     return close <= year_low + tol
 
 
+def _year_ma60_breaks(closes, ma_months, year_months):
+    """近 year_months 根月线里，月末收盘严格小于截至该月滚动均线的月份。
+
+    只检查已经凑满 ma_months 根的月份。更早的月份没有「当时 MA60」，
+    不视为跌破；总根数不足 ma_months 时调用方不会入选。
+    close == MA 视为贴平，不记入跌破。
+    """
+    breaks = []
+    start = len(closes) - year_months
+    if start < 0:
+        start = 0
+    for i in range(start, len(closes)):
+        if i + 1 < ma_months:
+            continue
+        window = closes[i + 1 - ma_months:i + 1]
+        ma = sum(c for _, c in window) / float(ma_months)
+        ym, close = closes[i]
+        if ma > 0 and close < ma:
+            breaks.append({
+                "ym": ym,
+                "close": round(close, 4),
+                "ma60": round(ma, 4),
+            })
+    return breaks
+
+
 def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTHS,
-                         premium_max=MA60_PREMIUM_MAX):
+                         premium_max=MA60_PREMIUM_MAX, exclude_year_break=True):
     """用月末收盘序列筛选。月份不足时返回 None。
 
     月线收盘沿用 _month_end_series：每个自然月取最后一根日 K 收盘，
@@ -98,6 +125,9 @@ def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTH
     最新一根前复权收盘与实际现价对齐）。
     近一年最低取最近 year_months 根月线收盘的最小值（含当前月，按根数而非
     再切日历窗口；中间缺月时 12 根可能跨过 12 个自然月）。
+    近一年未跌破：这 year_months 根中，只要有一根月末收盘 < 截至该月的滚动
+    MA（默认 60），即剔除。贴平不算跌破。exclude_year_break=False 时保留旧口径，
+    便于对照。
     """
     closes = _positive_month_closes(bars)
     if len(closes) < ma_months or len(closes) < year_months:
@@ -110,14 +140,17 @@ def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTH
     if ma60 <= 0 or year_low <= 0:
         return None
     premium = (close / ma60 - 1.0) * 100.0
-    matched = (ma60 < close <= ma60 * (1.0 + premium_max)
-               and _near_year_month_low(close, year_low))
+    breaks = _year_ma60_breaks(closes, ma_months, year_months)
+    above_ma = ma60 < close <= ma60 * (1.0 + premium_max)
+    at_year_low = _near_year_month_low(close, year_low)
+    matched = above_ma and at_year_low and not (exclude_year_break and breaks)
     return {
         "close": round(close, 4),
         "ma60": round(ma60, 4),
         "premium_pct": round(premium, 2),
         "year_low_month_close": round(year_low, 4),
         "months": len(closes),
+        "ma60_breaks": breaks,
         "matched": matched,
     }
 
@@ -160,6 +193,8 @@ def build_ma60_year_low_payload(items, klines, trade_date):
             "year_low_rel_tol": YEAR_LOW_REL_TOL,
             "month_close": "month_end",
             "price_basis": "qfq",
+            # 近一年任意一根月末收盘 < 截至该月的滚动 MA60 则剔除；贴平不算。
+            "exclude_year_close_below_ma": True,
         },
         "items": rows,
     }
@@ -936,7 +971,7 @@ def main():
     ma60_payload = build_ma60_year_low_payload(items, klines, trade_date)
     with open(os.path.join(meta_dir, "ma60_year_low.json"), "w", encoding="utf-8") as f:
         json.dump(ma60_payload, f, ensure_ascii=False)
-    print("   60月均溢价≤10%且近一年月线最低: %d 只" % len(ma60_payload["items"]),
+    print("   近一年未跌破60月均、溢价≤10%且月线最低: %d 只" % len(ma60_payload["items"]),
           flush=True)
 
     # Each successfully refreshed price series was already persisted above.
