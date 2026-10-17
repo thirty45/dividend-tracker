@@ -1,4 +1,4 @@
-"""60月均溢价与近一年月线最低筛选。"""
+"""60月均溢价、近一年未跌破与近一年月线最低筛选。"""
 import unittest
 
 from pipeline.update_daily import (
@@ -100,11 +100,50 @@ class Ma60YearLowTests(unittest.TestCase):
         self.assertEqual(payload["params"]["ma_months"], 60)
         self.assertEqual(payload["params"]["year_months"], 12)
         self.assertEqual(payload["params"]["month_close"], "month_end")
+        self.assertTrue(payload["params"]["exclude_year_close_below_ma"])
         codes = [row["code"] for row in payload["items"]]
         self.assertEqual(codes, ["000001", "000002"])
         self.assertEqual(payload["items"][0]["dy"], 6.2)
         self.assertLess(payload["items"][0]["premium_pct"],
                         payload["items"][1]["premium_pct"])
+
+    def test_rejects_when_any_year_month_closed_below_its_ma60(self):
+        # 早段高价抬高当时 MA；近 12 根从 12 收到 9.1。首月 12 < 当时 MA60 12.1，
+        # 但现价仍高于当前 MA、溢价约 8%、且是这 12 根的最低。旧口径入选，新口径剔除。
+        closes = [30.0] * 12 + [8.0] * 48 + [
+            12, 11.5, 11, 10.5, 10.2, 10, 9.8, 9.6, 9.4, 9.3, 9.2, 9.1]
+        bars = month_bars(closes)
+        stats = screen_ma60_year_low(bars)
+        self.assertFalse(stats["matched"])
+        self.assertGreaterEqual(len(stats["ma60_breaks"]), 1)
+        self.assertLess(stats["ma60_breaks"][0]["close"], stats["ma60_breaks"][0]["ma60"])
+        old = screen_ma60_year_low(bars, exclude_year_break=False)
+        self.assertTrue(old["matched"])
+        self.assertAlmostEqual(old["premium_pct"], 7.99, places=2)
+
+    def test_keeps_when_every_year_month_stays_above_ma60(self):
+        closes = [10.0] * 68 + [10.2] * 11 + [10.15]
+        stats = screen_ma60_year_low(month_bars(closes))
+        self.assertTrue(stats["matched"])
+        self.assertEqual(stats["ma60_breaks"], [])
+        self.assertEqual(stats["close"], 10.15)
+        self.assertLessEqual(stats["premium_pct"], 10)
+
+    def test_equal_close_to_past_ma60_is_not_a_break(self):
+        # 近 12 根的第一根收盘恰好等于当时 MA60；其后 11 根收在 10.6，
+        # 现价仍是近一年最低且站上当前 MA。贴平不剔除。
+        hist = [12.5] * 11 + [10.2] * 48
+        touch = sum(hist) / 59.0
+        closes = hist + [touch] + [10.6] * 11
+        bars = month_bars(closes)
+        stats = screen_ma60_year_low(bars)
+        self.assertTrue(stats["matched"])
+        self.assertEqual(stats["ma60_breaks"], [])
+        dipped = closes[:]
+        dipped[59] = touch - 0.01
+        broken = screen_ma60_year_low(month_bars(dipped))
+        self.assertFalse(broken["matched"])
+        self.assertTrue(any(row["close"] < row["ma60"] for row in broken["ma60_breaks"]))
 
 
 if __name__ == "__main__":
