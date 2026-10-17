@@ -23,7 +23,7 @@ def universe(data, cfg):
     snap = json.loads((data / 'snapshot.json').read_text(encoding='utf-8'))
     stocks = {str(x['code']): x.get('name', '') for x in snap['items']}
     # Detail pages are also reachable through these independent stock lists.
-    for name in ('soe', 'social_security', 'dma_low30', 'insider_buys'):
+    for name in ('soe', 'social_security', 'dma_low30', 'ma60_year_low', 'insider_buys'):
         try:
             p = json.loads((data / 'meta' / (name + '.json')).read_text(encoding='utf-8'))
             def collect(x):

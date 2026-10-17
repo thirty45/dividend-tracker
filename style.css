@@ -201,6 +201,11 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .rank-dma-table tbody tr { cursor: pointer; }
 .rank-dma-table .dma-name:hover { color: var(--blue); text-decoration: underline; }
 .rank-dma-empty { color: var(--muted); font-size: 12px; padding: 7px 2px; }
+.rank-ma60 { grid-column: 1 / -1; min-width: 0; }
+.rank-ma60 .rank-title { flex-wrap: wrap; }
+.rank-ma60-scroll { max-height: 360px; }
+.rank-ma60-table { width: max-content; min-width: 100%; }
+.rank-ma60-table th, .rank-ma60-table td { white-space: nowrap; }
 
 /* 高管增持排名表（全宽） */
 .insider-rank { margin: 0 0 12px; }
@@ -240,6 +245,7 @@ footer { text-align: center; padding: 18px 10px 30px; }
   .pf-k { flex-basis: 72px; }
   .rank-side { grid-template-columns: 1fr; }
   .rank-dma-scroll { max-height: 260px; }
+  .rank-ma60-scroll { max-height: 280px; }
 }
 
 /* ===== 自选库 ===== */
