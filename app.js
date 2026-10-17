@@ -1,7 +1,7 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-10-11-efficiency-v1";
+const APP_VERSION = "2026-10-17-ma60-year-low";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 window.APP_VERSION = APP_VERSION;
@@ -70,6 +70,7 @@ const state = {
   fundSearch: "", view: "list", fundCurrent: null, fundChart: null,
   cbonds: { listed: [], pending: [] },
   dmaLow30: null,
+  ma60YearLow: null,
   hkStocks: [], hkSnap: null, hkPy: null, hkLoaded: false,
   hkSort: { k: "dy", asc: false }, hkSearch: "",
   hkChart: null, hkK: null, hkRaw: null, hkDivs: null,
@@ -112,13 +113,14 @@ function initials(name) {
 
 async function load() {
   try {
-    const [snap, b, fnd, cbd, ins, dma] = await Promise.all([
+    const [snap, b, fnd, cbd, ins, dma, ma60] = await Promise.all([
       readJSON("data/snapshot.json"),
       readJSON("data/meta/boards.json").catch(() => null),
       readJSON("data/funds.json").catch(() => null),
       readJSON("data/cbonds.json").catch(() => null),
       readJSON("data/meta/insider_buys.json").catch(() => null),
       readJSON("data/meta/dma_low30.json").catch(() => null),
+      readJSON("data/meta/ma60_year_low.json").catch(() => null),
     ]);
     if (!snap || !Array.isArray(snap.items)) throw new Error("股票快照格式不正确");
     const snapshotItems = snap.items.filter((s) => s && !isExcludedCode(s.code));
@@ -134,6 +136,9 @@ async function load() {
       ? ins.items.filter((x) => !isExcludedCode(x && x.code)) : [];
     state.dmaLow30 = dma && Array.isArray(dma.items) ? Object.assign({}, dma, {
       items: dma.items.filter((x) => !isExcludedCode(x && x.code)),
+    }) : null;
+    state.ma60YearLow = ma60 && Array.isArray(ma60.items) ? Object.assign({}, ma60, {
+      items: ma60.items.filter((x) => !isExcludedCode(x && x.code)),
     }) : null;
     state.pyMap = new Map();
     state.stocks.forEach((s) => state.pyMap.set(s.code, initials(s.name || "")));
@@ -1902,10 +1907,52 @@ function renderRankings() {
     }
     return `<div class="rank-block rank-dma"><div class="rank-title"><span>${title}</span>${count}</div>${body}</div>`;
   };
+  const ma60Rows = state.ma60YearLow && Array.isArray(state.ma60YearLow.items)
+    ? state.ma60YearLow.items.filter((x) => !isExcludedCode(x && x.code)).slice().sort((a, b) => {
+      const ap = a.premium_pct == null || isNaN(Number(a.premium_pct)) ? null : Number(a.premium_pct);
+      const bp = b.premium_pct == null || isNaN(Number(b.premium_pct)) ? null : Number(b.premium_pct);
+      if (ap == null && bp == null) return String(a.code || "").localeCompare(String(b.code || ""));
+      if (ap == null) return 1;
+      if (bp == null) return -1;
+      const ad = a.dy == null || isNaN(Number(a.dy)) ? -1e9 : Number(a.dy);
+      const bd = b.dy == null || isNaN(Number(b.dy)) ? -1e9 : Number(b.dy);
+      return ap - bp || bd - ad || String(a.code || "").localeCompare(String(b.code || ""));
+    }) : [];
+  const ma60Table = (rows) => {
+    const payloadMissing = !state.ma60YearLow;
+    const title = "站上60月均且溢价≤10% · 近一年月线最低 · 数据日期 " +
+      esc(state.ma60YearLow?.date || "—");
+    const count = rows.length ? `<span class="rank-dma-count">${rows.length} 只</span>` : "";
+    let body = "";
+    if (payloadMissing) {
+      body = '<div class="rank-dma-empty">月线筛选数据暂不可用</div>';
+    } else if (!rows.length) {
+      body = '<div class="rank-dma-empty">当前没有满足条件的股票</div>';
+    } else {
+      const smap = new Map(all.map((s) => [s.code, s]));
+      body = `<div class="rank-dma-scroll rank-ma60-scroll"><table class="rank-dma-table rank-ma60-table">` +
+        `<thead><tr><th>代码</th><th>名称</th><th class="num">现价</th><th class="num">60月均</th>` +
+        `<th class="num">溢价%</th><th class="num">近一年月线最低</th><th class="num">股息率TTM%</th></tr></thead><tbody>` +
+        rows.map((x) => {
+          const code = String(x.code || "");
+          const stock = smap.get(code) || {};
+          const name = x.name || stock.name || code || "—";
+          const dy = x.dy != null ? x.dy : stock.dy;
+          return `<tr data-code="${esc(code)}"><td class="dma-name">${esc(code)}</td>` +
+            `<td>${esc(name)}</td>` +
+            `<td class="num">${fmt(x.close)}</td><td class="num">${fmt(x.ma60)}</td>` +
+            `<td class="num">${fmt(x.premium_pct)}</td>` +
+            `<td class="num">${fmt(x.year_low_month_close)}</td>` +
+            `<td class="num">${fmt(dy)}</td></tr>`;
+        }).join("") + `</tbody></table></div>`;
+    }
+    return `<div class="rank-block rank-dma rank-ma60"><div class="rank-title"><span>${title}</span>${count}</div>${body}</div>`;
+  };
   const bollDmaSide = `<div class="rank-side">` +
     block("连续3天跌破布林下轨", boll3, "boll_days", "今日暂无满足条件的股票", true) +
     dmaTable(dmaRows) + `</div>`;
-  box.innerHTML = block("银行股息率 Top10", banks, "dy") +
+  box.innerHTML = ma60Table(ma60Rows) +
+    block("银行股息率 Top10", banks, "dy") +
     block("连续分红≥5年 · 近1月涨幅 Top10", up, "pct_1m") +
     block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m") +
     block("连跌7天", down7, "pct_7d", "今日暂无满足条件的股票") +

@@ -58,6 +58,113 @@ def _month_end_series(bars):
     return [(ym, ms[ym]) for ym in sorted(ms.keys())]
 
 
+# 首页筛选：已站上 60 月均、溢价不超过 10%，且现价处于近 12 根月线收盘的最低水平。
+MA60_MONTHS = 60
+MA60_PREMIUM_MAX = 0.10
+YEAR_LOW_MONTHS = 12
+# 半分容差：同一分位视为相等，相邻 1 分钱（0.01）不视为最低。
+YEAR_LOW_ABS_TOL = 0.005
+YEAR_LOW_REL_TOL = 1e-6
+
+
+def _positive_month_closes(bars):
+    """月末收盘价（升序）。非正数或无法解析的月份跳过。"""
+    out = []
+    for ym, close in _month_end_series(bars):
+        try:
+            value = float(close)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        out.append((ym, value))
+    return out
+
+
+def _near_year_month_low(close, year_low):
+    """现价等于或视为近一年月线最低收盘（含半分/浮点容差）。"""
+    if year_low is None or close is None:
+        return False
+    tol = max(YEAR_LOW_ABS_TOL, abs(year_low) * YEAR_LOW_REL_TOL)
+    return close <= year_low + tol
+
+
+def screen_ma60_year_low(bars, ma_months=MA60_MONTHS, year_months=YEAR_LOW_MONTHS,
+                         premium_max=MA60_PREMIUM_MAX):
+    """用月末收盘序列筛选。月份不足时返回 None。
+
+    月线收盘沿用 _month_end_series：每个自然月取最后一根日 K 收盘，
+    当前月用最新收盘。MA 与现价使用同一复权口径（每日流水线传入前复权日 K，
+    最新一根前复权收盘与实际现价对齐）。
+    近一年最低取最近 year_months 根月线收盘的最小值（含当前月，按根数而非
+    再切日历窗口；中间缺月时 12 根可能跨过 12 个自然月）。
+    """
+    closes = _positive_month_closes(bars)
+    if len(closes) < ma_months or len(closes) < year_months:
+        return None
+    ma_win = [c for _, c in closes[-ma_months:]]
+    year_win = [c for _, c in closes[-year_months:]]
+    ma60 = sum(ma_win) / float(ma_months)
+    year_low = min(year_win)
+    close = closes[-1][1]
+    if ma60 <= 0 or year_low <= 0:
+        return None
+    premium = (close / ma60 - 1.0) * 100.0
+    matched = (ma60 < close <= ma60 * (1.0 + premium_max)
+               and _near_year_month_low(close, year_low))
+    return {
+        "close": round(close, 4),
+        "ma60": round(ma60, 4),
+        "premium_pct": round(premium, 2),
+        "year_low_month_close": round(year_low, 4),
+        "months": len(closes),
+        "matched": matched,
+    }
+
+
+def build_ma60_year_low_payload(items, klines, trade_date):
+    """从最新快照股票与 K 线写出首页筛选表。"""
+    rows = []
+    for it in items or []:
+        code = it.get("code")
+        stats = screen_ma60_year_low((klines or {}).get(code) or [])
+        if not stats or not stats["matched"]:
+            continue
+        dy = it.get("dy")
+        try:
+            dy = round(float(dy), 2) if dy is not None else None
+        except (TypeError, ValueError):
+            dy = None
+        rows.append({
+            "code": code,
+            "name": it.get("name") or code,
+            "close": stats["close"],
+            "ma60": stats["ma60"],
+            "premium_pct": stats["premium_pct"],
+            "year_low_month_close": stats["year_low_month_close"],
+            "dy": dy,
+            "months": stats["months"],
+        })
+    rows.sort(key=lambda r: (
+        r["premium_pct"] if r["premium_pct"] is not None else float("inf"),
+        -(r["dy"] if r["dy"] is not None else -1e9),
+        r.get("code") or "",
+    ))
+    return {
+        "date": trade_date,
+        "params": {
+            "ma_months": MA60_MONTHS,
+            "premium_max": MA60_PREMIUM_MAX,
+            "year_months": YEAR_LOW_MONTHS,
+            "year_low_abs_tol": YEAR_LOW_ABS_TOL,
+            "year_low_rel_tol": YEAR_LOW_REL_TOL,
+            "month_close": "month_end",
+            "price_basis": "qfq",
+        },
+        "items": rows,
+    }
+
+
 def _streak_down(bars, n=7):
     """连续 n 个交易日收盘价逐日下跌（每日收盘 < 前一日收盘）。数据不足返回 False。"""
     if not bars or len(bars) < n + 1:
@@ -826,6 +933,11 @@ def main():
                    "params": {"short": 5, "long": 89, "signal": 36,
                               "percentile": 0.30},
                    "items": dma_items}, f, ensure_ascii=False)
+    ma60_payload = build_ma60_year_low_payload(items, klines, trade_date)
+    with open(os.path.join(meta_dir, "ma60_year_low.json"), "w", encoding="utf-8") as f:
+        json.dump(ma60_payload, f, ensure_ascii=False)
+    print("   60月均溢价≤10%且近一年月线最低: %d 只" % len(ma60_payload["items"]),
+          flush=True)
 
     # Each successfully refreshed price series was already persisted above.
 
