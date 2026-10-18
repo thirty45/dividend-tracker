@@ -1,0 +1,481 @@
+{
+  "schema": "rebalance.v1",
+  "as_of": "2026-10-18",
+  "updated_at": "2026-10-18T21:39:01+08:00",
+  "low_vol_code": "H30269",
+  "low_vol_note": "低波只跟踪 H30269 中证红利低波动（50 只，每年 12 月调整）。930955 官方名称是中证红利低波动100，季度调整，与 H30269 不是同一指数；本站红利低波主 ETF 512890 跟踪 H30269，故不并列收录 930955。",
+  "calendar_note": "000922、H30269、000015 按编制方案每年 12 月调整一次，不是半年审。000016、000300 每年 6 月和 12 月审核，实施日为第二个星期五的下一交易日。ETF 跟随对应指数，不单列调样。510880 红利ETF华泰柏瑞跟踪上证红利，不跟踪中证红利。",
+  "refresh": {
+    "live": true,
+    "warnings": [
+      "中证指数公告：中证公告接口失败: 服务器异常,请联系管理员"
+    ],
+    "notice_count": 1,
+    "checked_at": "2026-10-18T21:39:01+08:00"
+  },
+  "universe": [
+    {
+      "code": "000922",
+      "name": "中证红利",
+      "group": "红利",
+      "cadence": "每年12月",
+      "methodology_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000922_Index_Methodology_cn.pdf",
+      "etfs": [
+        {
+          "code": "515180",
+          "name": "红利ETF易方达",
+          "source_url": "https://www.efunds.com.cn/Html5/fund/515180_org.shtml"
+        },
+        {
+          "code": "515080",
+          "name": "中证红利ETF招商",
+          "source_url": "https://fund.eastmoney.com/515080.html"
+        }
+      ]
+    },
+    {
+      "code": "H30269",
+      "name": "中证红利低波动",
+      "group": "红利",
+      "cadence": "每年12月",
+      "methodology_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/H30269_Index_Methodology_cn.pdf",
+      "etfs": [
+        {
+          "code": "512890",
+          "name": "红利低波ETF华泰柏瑞",
+          "source_url": "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2025-10-28/512890_20251028_IP63.pdf"
+        },
+        {
+          "code": "563020",
+          "name": "红利低波ETF易方达",
+          "source_url": "https://www.efunds.com.cn/Html5/fund/563020_org.shtml"
+        }
+      ]
+    },
+    {
+      "code": "000015",
+      "name": "上证红利",
+      "group": "红利",
+      "cadence": "每年12月",
+      "methodology_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000015_Index_Methodology_cn.pdf",
+      "etfs": [
+        {
+          "code": "510880",
+          "name": "红利ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510880.html"
+        }
+      ]
+    },
+    {
+      "code": "000016",
+      "name": "上证50",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "methodology_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000016_Index_Methodology_cn.pdf",
+      "etfs": [
+        {
+          "code": "510050",
+          "name": "上证50ETF华夏",
+          "source_url": "https://fund.eastmoney.com/510050.html"
+        }
+      ]
+    },
+    {
+      "code": "000300",
+      "name": "沪深300",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "methodology_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300_Index_Methodology_cn.pdf",
+      "etfs": [
+        {
+          "code": "510300",
+          "name": "沪深300ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510300.html"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "000922-2026-12",
+      "index_code": "000922",
+      "index_name": "中证红利",
+      "group": "红利",
+      "cadence": "每年12月",
+      "etfs": [
+        {
+          "code": "515180",
+          "name": "红利ETF易方达",
+          "source_url": "https://www.efunds.com.cn/Html5/fund/515180_org.shtml"
+        },
+        {
+          "code": "515080",
+          "name": "中证红利ETF招商",
+          "source_url": "https://fund.eastmoney.com/515080.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2026-12-14",
+      "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000922_Index_Methodology_cn.pdf",
+      "source_title": "中证红利指数编制方案",
+      "list_url": "",
+      "status": "待公告",
+      "note": "编制方案：每年12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "H30269-2026-12",
+      "index_code": "H30269",
+      "index_name": "中证红利低波动",
+      "group": "红利",
+      "cadence": "每年12月",
+      "etfs": [
+        {
+          "code": "512890",
+          "name": "红利低波ETF华泰柏瑞",
+          "source_url": "https://www.sse.com.cn/disclosure/fund/announcement/c/new/2025-10-28/512890_20251028_IP63.pdf"
+        },
+        {
+          "code": "563020",
+          "name": "红利低波ETF易方达",
+          "source_url": "https://www.efunds.com.cn/Html5/fund/563020_org.shtml"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2026-12-14",
+      "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/H30269_Index_Methodology_cn.pdf",
+      "source_title": "中证红利低波动指数编制方案",
+      "list_url": "",
+      "status": "待公告",
+      "note": "编制方案：每年12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000015-2026-12",
+      "index_code": "000015",
+      "index_name": "上证红利",
+      "group": "红利",
+      "cadence": "每年12月",
+      "etfs": [
+        {
+          "code": "510880",
+          "name": "红利ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510880.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2026-12-14",
+      "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000015_Index_Methodology_cn.pdf",
+      "source_title": "上证红利指数编制方案",
+      "list_url": "",
+      "status": "待公告",
+      "note": "编制方案：每年12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000016-2026-12",
+      "index_code": "000016",
+      "index_name": "上证50",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510050",
+          "name": "上证50ETF华夏",
+          "source_url": "https://fund.eastmoney.com/510050.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2026-12-14",
+      "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000016_Index_Methodology_cn.pdf",
+      "source_title": "上证50指数编制方案",
+      "list_url": "",
+      "status": "待公告",
+      "note": "编制方案：每年6月、12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000300-2026-12",
+      "index_code": "000300",
+      "index_name": "沪深300",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510300",
+          "name": "沪深300ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510300.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2026-12-14",
+      "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300_Index_Methodology_cn.pdf",
+      "source_title": "沪深300指数编制方案",
+      "list_url": "",
+      "status": "待公告",
+      "note": "编制方案：每年6月、12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000016-2026-06",
+      "index_code": "000016",
+      "index_name": "上证50",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510050",
+          "name": "上证50ETF华夏",
+          "source_url": "https://fund.eastmoney.com/510050.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": "2026-05-29",
+      "effective_date": "2026-06-15",
+      "notice_effective": "2026-06-12",
+      "adds": [
+        {
+          "code": "600089",
+          "name": "特变电工"
+        },
+        {
+          "code": "600183",
+          "name": "生益科技"
+        },
+        {
+          "code": "601600",
+          "name": "中国铝业"
+        },
+        {
+          "code": "601688",
+          "name": "华泰证券"
+        },
+        {
+          "code": "603986",
+          "name": "兆易创新"
+        }
+      ],
+      "removes": [
+        {
+          "code": "600104",
+          "name": "上汽集团"
+        },
+        {
+          "code": "600690",
+          "name": "海尔智家"
+        },
+        {
+          "code": "601225",
+          "name": "陕西煤业"
+        },
+        {
+          "code": "601816",
+          "name": "京沪高铁"
+        },
+        {
+          "code": "601985",
+          "name": "中国核电"
+        }
+      ],
+      "source_url": "https://www.sse.com.cn/market/sseindex/diclosure/c/c_20260529_10820183.shtml",
+      "source_title": "关于上证50、上证180、上证380等指数定期调整结果的公告",
+      "list_url": "https://www.sse.com.cn/market/sseindex/diclosure/c/10820183/files/eaebcb5e5ad343ce87ce9a55f8ba3cce.pdf",
+      "status": "已生效",
+      "note": "公告写明 2026-06-12 收市后生效，下一交易日 2026-06-15 起按新样本计算。跟踪 ETF 随指数调整。"
+    },
+    {
+      "id": "000300-2026-06",
+      "index_code": "000300",
+      "index_name": "沪深300",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510300",
+          "name": "沪深300ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510300.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": "2026-05-29",
+      "effective_date": "2026-06-15",
+      "notice_effective": "2026-06-12",
+      "adds": [
+        {
+          "code": "000657",
+          "name": "中钨高新"
+        },
+        {
+          "code": "000988",
+          "name": "华工科技"
+        },
+        {
+          "code": "001280",
+          "name": "中国铀业"
+        },
+        {
+          "code": "002202",
+          "name": "金风科技"
+        },
+        {
+          "code": "002353",
+          "name": "杰瑞股份"
+        },
+        {
+          "code": "002532",
+          "name": "天山铝业"
+        },
+        {
+          "code": "002558",
+          "name": "巨人网络"
+        },
+        {
+          "code": "002602",
+          "name": "世纪华通"
+        },
+        {
+          "code": "002837",
+          "name": "英维克"
+        },
+        {
+          "code": "300450",
+          "name": "先导智能"
+        },
+        {
+          "code": "301165",
+          "name": "锐捷网络"
+        },
+        {
+          "code": "301308",
+          "name": "江波龙"
+        },
+        {
+          "code": "600118",
+          "name": "中国卫星"
+        },
+        {
+          "code": "600221",
+          "name": "海航控股"
+        },
+        {
+          "code": "600549",
+          "name": "厦门钨业"
+        },
+        {
+          "code": "601727",
+          "name": "上海电气"
+        },
+        {
+          "code": "688072",
+          "name": "拓荆科技"
+        },
+        {
+          "code": "688183",
+          "name": "生益电子"
+        },
+        {
+          "code": "688521",
+          "name": "芯原股份"
+        }
+      ],
+      "removes": [
+        {
+          "code": "000661",
+          "name": "长春高新"
+        },
+        {
+          "code": "000786",
+          "name": "北新建材"
+        },
+        {
+          "code": "000876",
+          "name": "新希望"
+        },
+        {
+          "code": "000983",
+          "name": "山西焦煤"
+        },
+        {
+          "code": "002252",
+          "name": "上海莱士"
+        },
+        {
+          "code": "002459",
+          "name": "晶澳科技"
+        },
+        {
+          "code": "002601",
+          "name": "龙佰集团"
+        },
+        {
+          "code": "300347",
+          "name": "泰格医药"
+        },
+        {
+          "code": "300759",
+          "name": "康龙化成"
+        },
+        {
+          "code": "300782",
+          "name": "卓胜微"
+        },
+        {
+          "code": "300979",
+          "name": "华利集团"
+        },
+        {
+          "code": "600161",
+          "name": "天坛生物"
+        },
+        {
+          "code": "600377",
+          "name": "宁沪高速"
+        },
+        {
+          "code": "601236",
+          "name": "红塔证券"
+        },
+        {
+          "code": "601298",
+          "name": "青岛港"
+        },
+        {
+          "code": "601808",
+          "name": "中海油服"
+        },
+        {
+          "code": "603195",
+          "name": "公牛集团"
+        },
+        {
+          "code": "688169",
+          "name": "石头科技"
+        },
+        {
+          "code": "688187",
+          "name": "时代电气"
+        }
+      ],
+      "source_url": "https://oss-ch.csindex.com.cn/notice/20260529155822-%E9%99%84%E4%BB%B6%EF%BC%9A%E9%83%A8%E5%88%86%E6%8C%87%E6%95%B0%E6%A0%B7%E6%9C%AC%E8%B0%83%E6%95%B4%E5%90%8D%E5%8D%95.pdf",
+      "source_title": "附件：部分指数样本调整名单（沪深300）",
+      "list_url": "https://oss-ch.csindex.com.cn/notice/20260529155822-%E9%99%84%E4%BB%B6%EF%BC%9A%E9%83%A8%E5%88%86%E6%8C%87%E6%95%B0%E6%A0%B7%E6%9C%AC%E8%B0%83%E6%95%B4%E5%90%8D%E5%8D%95.pdf",
+      "status": "已生效",
+      "note": "中证指数公司 2026-05-29 附件。公告口径为 2026-06-12 收市后生效，下一交易日 2026-06-15 起按新样本计算。"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-10-17-ma60-bfq";
+const APP_VERSION = "2026-10-18-rebalance";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 window.APP_VERSION = APP_VERSION;
@@ -71,6 +71,7 @@ const state = {
   cbonds: { listed: [], pending: [] },
   dmaLow30: null,
   ma60YearLow: null,
+  rebalance: null,
   hkStocks: [], hkSnap: null, hkPy: null, hkLoaded: false,
   hkSort: { k: "dy", asc: false }, hkSearch: "",
   hkChart: null, hkK: null, hkRaw: null, hkDivs: null,
@@ -113,7 +114,7 @@ function initials(name) {
 
 async function load() {
   try {
-    const [snap, b, fnd, cbd, ins, dma, ma60] = await Promise.all([
+    const [snap, b, fnd, cbd, ins, dma, ma60, reb] = await Promise.all([
       readJSON("data/snapshot.json"),
       readJSON("data/meta/boards.json").catch(() => null),
       readJSON("data/funds.json").catch(() => null),
@@ -121,6 +122,7 @@ async function load() {
       readJSON("data/meta/insider_buys.json").catch(() => null),
       readJSON("data/meta/dma_low30.json").catch(() => null),
       readJSON("data/meta/ma60_year_low.json").catch(() => null),
+      readJSON("data/meta/rebalance.json").catch(() => null),
     ]);
     if (!snap || !Array.isArray(snap.items)) throw new Error("股票快照格式不正确");
     const snapshotItems = snap.items.filter((s) => s && !isExcludedCode(s.code));
@@ -140,6 +142,7 @@ async function load() {
     state.ma60YearLow = ma60 && Array.isArray(ma60.items) ? Object.assign({}, ma60, {
       items: ma60.items.filter((x) => !isExcludedCode(x && x.code)),
     }) : null;
+    state.rebalance = reb && Array.isArray(reb.events) ? reb : null;
     state.pyMap = new Map();
     state.stocks.forEach((s) => state.pyMap.set(s.code, initials(s.name || "")));
     state.watch = loadWatch();
@@ -1805,6 +1808,7 @@ function route() {
     return;
   }
   renderList();
+  try { renderRebalance(); } catch (e) { /* 调仓提醒异常不影响页面 */ }
   try { renderRankings(); } catch (e) { /* 单个榜单异常不影响页面 */ }
   try { renderInsiderRank(); } catch (e) { /* 单个榜单异常不影响页面 */ }
   try { renderHomeCbonds(); } catch (e) { /* 可转债公告表异常不影响页面 */ }
@@ -1962,6 +1966,81 @@ function renderRankings() {
     el.addEventListener("click", () => { location.hash = "#/stock/" + el.dataset.code; }));
   box.querySelectorAll(".rank-dma-table tbody tr").forEach((tr) =>
     tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; }));
+}
+
+function rebNames(rows) {
+  if (!rows || !rows.length) return "—";
+  return rows.map((row) => {
+    const code = esc(row.code || "");
+    const name = esc(row.name || "");
+    const label = code && name ? code + " " + name : (code || name || "—");
+    if (/^\d{6}$/.test(String(row.code || ""))) {
+      return '<span class="reb-sec"><a href="#/stock/' + code + '">' + label + "</a></span>";
+    }
+    return '<span class="reb-sec">' + label + "</span>";
+  }).join("、");
+}
+
+function rebStatusClass(status) {
+  if (status === "已公告") return "reb-ann";
+  if (status === "已生效") return "reb-done";
+  return "reb-wait";
+}
+
+// 首页：指数定期审视与已公告调入调出。未来事件在前，近期已生效收在后面。
+function renderRebalance() {
+  const box = $("#rebalance");
+  const table = $("#rebalance-table");
+  const tbody = table ? table.querySelector("tbody") : null;
+  const meta = $("#rebalance-meta");
+  const note = $("#rebalance-note");
+  if (!box || !tbody) return;
+  const data = state.rebalance;
+  if (!data) {
+    tbody.innerHTML = '<tr><td colspan="8">调仓数据暂不可用</td></tr>';
+    if (meta) meta.textContent = "";
+    if (note) note.textContent = "";
+    return;
+  }
+  const events = Array.isArray(data.events) ? data.events : [];
+  const future = events.filter((ev) => ev.status !== "已生效");
+  const past = events.filter((ev) => ev.status === "已生效");
+  const row = (ev) => {
+    const etfs = (ev.etfs || []).map((etf) => esc(etf.name || "") + " " + esc(etf.code || "")).join(" · ");
+    const effSub = ev.notice_effective && ev.notice_effective !== ev.effective_date
+      ? '<span class="reb-sub">' + esc(ev.notice_effective) + " 收市后</span>" : "";
+    const src = ev.source_url
+      ? '<a href="' + esc(ev.source_url) + '" target="_blank" rel="noopener">公告</a>' : "—";
+    const list = ev.list_url && ev.list_url !== ev.source_url
+      ? ' · <a href="' + esc(ev.list_url) + '" target="_blank" rel="noopener">名单</a>' : "";
+    const cls = ev.status === "已生效" ? "reb-past" : "reb-future";
+    return '<tr class="' + cls + '">' +
+      '<td><span class="reb-name">' + esc(ev.index_name || "—") + " " + esc(ev.index_code || "") + "</span>" +
+      (etfs ? '<span class="reb-etf">' + etfs + "</span>" : "") + "</td>" +
+      "<td>" + esc(ev.event_type || "—") +
+      (ev.cadence ? '<span class="reb-sub">' + esc(ev.cadence) + "</span>" : "") + "</td>" +
+      "<td>" + esc(ev.announce_date || "—") + "</td>" +
+      "<td>" + esc(ev.effective_date || "—") + effSub + "</td>" +
+      '<td class="reb-names">' + rebNames(ev.adds) + "</td>" +
+      '<td class="reb-names">' + rebNames(ev.removes) + "</td>" +
+      '<td class="reb-src">' + src + list + "</td>" +
+      '<td><span class="reb-status ' + rebStatusClass(ev.status) + '">' + esc(ev.status || "—") + "</span></td></tr>";
+  };
+  let html = "";
+  if (future.length) {
+    html += '<tr class="reb-group"><td colspan="8">即将到来</td></tr>' + future.map(row).join("");
+  }
+  if (past.length) {
+    html += '<tr class="reb-group"><td colspan="8">近期已生效</td></tr>' + past.map(row).join("");
+  }
+  if (!html) html = '<tr><td colspan="8">暂无调仓日历</td></tr>';
+  tbody.innerHTML = html;
+  if (meta) meta.textContent = "数据日 " + (data.as_of || "—");
+  if (note) {
+    const warns = data.refresh && Array.isArray(data.refresh.warnings) ? data.refresh.warnings : [];
+    const warn = warns.length ? "本次刷新：" + warns.join("；") + "。已保留日历和已核对名单。" : "";
+    note.textContent = [data.calendar_note, data.low_vol_note, warn].filter(Boolean).join(" ");
+  }
 }
 
 // 近1年高管增持排名：最近增持的排在最前（全宽表格）

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>红利股票跟踪</title>
-  <link rel="stylesheet" href="style.css?v=20261017-ma60-year-low-2">
+  <link rel="stylesheet" href="style.css?v=20261018-rebalance">
   <script src="https://cdn.staticfile.org/echarts/5.5.0/echarts.min.js"></script>
   <script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
   <script src="https://cdn.staticfile.org/pinyin-pro/3.26.0/index.js"></script>
@@ -32,6 +32,30 @@
   </header>
   <main>
     <section id="view-list">
+      <div id="rebalance" class="rebalance">
+        <div class="rank-title">
+          <span>重要事件 / 调仓提醒</span>
+          <span id="rebalance-meta" class="rank-dma-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table id="rebalance-table">
+            <thead>
+              <tr>
+                <th>指数/ETF</th>
+                <th>类型</th>
+                <th>公告日</th>
+                <th>生效日</th>
+                <th>调入</th>
+                <th>调出</th>
+                <th>来源</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div id="rebalance-note" class="muted"></div>
+      </div>
       <div id="rankings" class="rankings"></div>
       <div id="insider-rank" class="insider-rank" hidden>
         <div class="rank-title">近1年高管增持 · 最近在前</div>
@@ -505,6 +529,6 @@
     </section>
   </main>
   <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 每日 16:30 后自动更新</footer>
-  <script src="app.js?v=20261017-ma60-bfq"></script>
+  <script src="app.js?v=20261018-rebalance"></script>
 </body>
 </html>
