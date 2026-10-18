@@ -979,7 +979,7 @@ def main():
     ma60_payload = build_ma60_year_low_payload(items, raw_klines, trade_date)
     with open(os.path.join(meta_dir, "ma60_year_low.json"), "w", encoding="utf-8") as f:
         json.dump(ma60_payload, f, ensure_ascii=False)
-    print("   近一年未跌破60月均、溢价≤10%且月线最低(不复权): %d 只"
+    print("   近一年未跌破60月均、溢价≤10%%且月线最低(不复权): %d 只"
           % len(ma60_payload["items"]),
           flush=True)
 
