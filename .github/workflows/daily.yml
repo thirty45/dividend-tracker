@@ -88,6 +88,13 @@ jobs:
         env:
           PYTHONUNBUFFERED: '1'
 
+      - name: 刷新指数调仓提醒
+        id: rebalance
+        continue-on-error: true
+        run: python pipeline/rebalance.py
+        env:
+          PYTHONUNBUFFERED: '1'
+
       - name: 补齐并检查个股K线覆盖
         run: python pipeline/repair_kline.py --repair
         env:
@@ -116,6 +123,7 @@ jobs:
           echo "| 港股通 | ${{ steps.hk.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 社保基金 | ${{ steps.social.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 国资红利 | ${{ steps.soe.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 调仓提醒 | ${{ steps.rebalance.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
           echo "失败模块保留此前快照；各模块日期见网页。" >> "$GITHUB_STEP_SUMMARY"
 
       - name: 提交数据变更

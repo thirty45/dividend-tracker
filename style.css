@@ -237,6 +237,53 @@ footer { text-align: center; padding: 18px 10px 30px; }
   border: 1px solid var(--line); border-radius: 10px;
 }
 
+/* 首页：指数定期审视 / 已公告调入调出 */
+.rebalance { margin: 0 0 12px; }
+.rebalance .rank-title {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+}
+#rebalance-table { white-space: normal; width: 100%; table-layout: fixed; }
+#rebalance-table th { cursor: default; }
+#rebalance-table th:nth-child(1) { width: 18%; }
+#rebalance-table th:nth-child(2) { width: 10%; }
+#rebalance-table th:nth-child(3) { width: 9%; }
+#rebalance-table th:nth-child(4) { width: 11%; }
+#rebalance-table th:nth-child(5) { width: 17%; }
+#rebalance-table th:nth-child(6) { width: 17%; }
+#rebalance-table th:nth-child(7) { width: 8%; }
+#rebalance-table th:nth-child(8) { width: 10%; }
+#rebalance-table th, #rebalance-table td { white-space: normal; vertical-align: top; }
+#rebalance-table tbody tr { cursor: default; }
+#rebalance-table tbody tr:hover { background: transparent; }
+#rebalance-table td:first-child, #rebalance-table th:first-child {
+  position: sticky; left: 0; z-index: 2; background: var(--card);
+  box-shadow: 1px 0 0 var(--line);
+}
+#rebalance-table th:first-child { z-index: 6; background: #fafbfc; }
+.reb-name { font-weight: 600; }
+.reb-etf, .reb-sub { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.reb-names { line-height: 1.45; overflow-wrap: anywhere; }
+.reb-sec { display: inline; }
+.reb-sec a { color: inherit; text-decoration: none; }
+.reb-sec a:hover { color: var(--blue); text-decoration: underline; }
+.reb-src { white-space: normal; }
+.reb-src a { color: var(--blue); }
+.reb-status {
+  display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 12px; line-height: 18px;
+}
+.reb-wait { background: #fff4e5; color: #b26a00; }
+.reb-ann { background: #e8f0fe; color: #1e5eff; }
+.reb-done { background: #f3f4f6; color: #7a818c; }
+#rebalance-table tr.reb-future td { background: #f7f9ff; }
+#rebalance-table tr.reb-future td:first-child { background: #f7f9ff; }
+#rebalance-table tr.reb-past { color: var(--muted); }
+#rebalance-table tr.reb-past td.reb-names { max-height: 4.6em; overflow: auto; }
+#rebalance-table tr.reb-group td {
+  background: #fafbfc; color: var(--muted); font-size: 12px; font-weight: 600;
+  position: static; box-shadow: none; min-width: 0;
+}
+#rebalance-note { margin-top: 6px; line-height: 1.55; }
+
 @media (max-width: 640px) {
   th, td { padding: 6px 7px; font-size: 12px; }
   #chart { height: 58vh; min-height: 360px; }
@@ -246,6 +293,8 @@ footer { text-align: center; padding: 18px 10px 30px; }
   .rank-side { grid-template-columns: 1fr; }
   .rank-dma-scroll { max-height: 260px; }
   .rank-ma60-scroll { max-height: 280px; }
+  #rebalance-table { min-width: 680px; }
+  .reb-names { max-width: none; }
 }
 
 /* ===== 自选库 ===== */
