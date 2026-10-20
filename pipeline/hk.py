@@ -28,12 +28,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
-from pipeline.net import fetch, fetch_json  # noqa: E402
+from pipeline.net import SourceGuard, fetch, fetch_json  # noqa: E402
 from pipeline.kline import valid_bars, coverage_fields as _coverage_fields, merge_bars as _merge_bars
 
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 CLIST_FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 KLINE_URL = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s.HK"
+# 腾讯对 runner 整批 501 时熔断，改用 Yahoo 港股日K（限速，不狂刷）。
+TENCENT_GUARD = SourceGuard("腾讯港股K线", max_fail=8)
+YAHOO_GUARD = SourceGuard("Yahoo港股K线", max_fail=8, min_interval=0.3)
 FIN_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 FS = "b:DLMK0146,b:DLMK0144"          # 港股通(沪)+港股通(深) 成分
 UT = "bd1d9ddb04089700cf9c27f6f7426281"
@@ -95,7 +99,8 @@ def _load_cached_components():
             "f100": item.get("industry") or "",
             "f115": item.get("pe"),
         }
-    return rows, str(snap.get("date") or "")
+    # components_asof 是成分最后一次真实抓取的日期；旧快照没有该字段时才退回 date。
+    return rows, str(snap.get("components_asof") or snap.get("date") or "")
 
 
 def fetch_components():
@@ -260,9 +265,63 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
     return [by_date[d] for d in sorted(by_date)]
 
 
+def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
+    """Yahoo 港股日K备用源。qfq=True 时按 adjclose/close 比例换算前复权 OHLC。"""
+    try:
+        start = datetime.datetime.strptime(_norm_date(beg), "%Y-%m-%d")
+    except ValueError:
+        start = datetime.datetime(1980, 1, 1)
+    p1 = int((start - datetime.datetime(1970, 1, 1)).total_seconds())
+    p2 = int(time.time()) + 86400
+    YAHOO_GUARD.wait()
+    sym = code[1:] if len(code) == 5 and code.startswith("0") else code  # 00700 -> 0700.HK
+    j = fetch_json(YAHOO_URL % sym,
+                   params={"period1": p1, "period2": p2, "interval": "1d", "events": "div,split"},
+                   referer="https://finance.yahoo.com/", timeout=20, retries=2, delay=2.0)
+    res = ((j.get("chart") or {}).get("result") or [None])[0] or {}
+    offset = (res.get("meta") or {}).get("gmtoffset") or 28800
+    quote = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+    adj = (((res.get("indicators") or {}).get("adjclose") or [{}])[0]).get("adjclose") or []
+    bars = []
+    for i, ts in enumerate(res.get("timestamp") or []):
+        try:
+            o, c, h, l = (float(quote[k][i]) for k in ("open", "close", "high", "low"))
+            v = float(quote["volume"][i] or 0)
+            f = float(adj[i]) / c if qfq and i < len(adj) and adj[i] and c else 1.0
+        except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+            continue  # 当天未收盘或停牌的空值
+        d = datetime.datetime.fromtimestamp(ts + offset, datetime.timezone.utc).strftime("%Y-%m-%d")
+        bars.append({"d": d, "o": round(o * f, 3), "c": round(c * f, 3),
+                     "h": round(h * f, 3), "l": round(l * f, 3), "v": v})
+    by_date = {b["d"]: b for b in bars}
+    bars = [by_date[d] for d in sorted(by_date)]
+    if not valid_bars(bars):
+        raise RuntimeError("Yahoo港股日K为空或无效")
+    return bars
+
+
 def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
-    """腾讯港股日K -> bars [{d,o,c,h,l,v}]；分段抓取并去重。"""
-    return _fetch_tencent_segments("hk" + code, beg, end, qfq)
+    """港股日K -> bars [{d,o,c,h,l,v}]：腾讯分段抓取优先，整只失败/熔断时改用 Yahoo。"""
+    first_err = None
+    if TENCENT_GUARD.blocked():
+        first_err = RuntimeError("腾讯港股K线已熔断")
+    else:
+        try:
+            bars = _fetch_tencent_segments("hk" + code, beg, end, qfq)
+            TENCENT_GUARD.ok()
+            return bars
+        except Exception as exc:  # noqa: BLE001
+            TENCENT_GUARD.fail(exc)
+            first_err = exc
+    if YAHOO_GUARD.blocked():
+        raise RuntimeError("%s；Yahoo港股K线已熔断" % str(first_err)[:240])
+    try:
+        bars = fetch_hk_kline_yahoo(code, beg, qfq)
+    except Exception as exc:  # noqa: BLE001
+        YAHOO_GUARD.fail(exc)
+        raise RuntimeError("%s；Yahoo：%s" % (str(first_err)[:240], str(exc)[:160])) from exc
+    YAHOO_GUARD.ok()
+    return bars
 
 
 def fetch_financial(codes, page_size=500):
@@ -617,7 +676,20 @@ def build():
                 payload.update(_coverage_fields(bars, latest_cutoff))
                 json.dump(payload, f, ensure_ascii=False)
         list(ex.map(_write, codes))
-    print("   K线完成 %d/%d" % (len(codes), len(codes)), flush=True)
+    fresh = [c for c in codes if c not in failed_codes and klines.get(c)]
+    print("   K线完成：需更新 %d 只，成功 %d，失败 %d，原已最新 %d（腾讯 成功%d/失败%d，Yahoo 成功%d/失败%d）"
+          % (len(todo), len(todo) - len(failed_codes), len(failed_codes), len(codes) - len(todo),
+             TENCENT_GUARD.ok_count, TENCENT_GUARD.fail_count,
+             YAHOO_GUARD.ok_count, YAHOO_GUARD.fail_count), flush=True)
+    kline_date = max((klines[c][-1]["d"] for c in fresh), default="")
+    if todo and len(failed_codes) == len(todo) and COMPONENTS_SOURCE == "snapshot-cache":
+        # 成分和K线都没有新数据：不改写快照，避免把旧行情标成今天。
+        print("::error title=港股通无新数据::成分接口不可用且 %d 只K线全部失败，保留原快照"
+              % len(todo), flush=True)
+        return 1
+    if failed_codes and os.environ.get("GITHUB_ACTIONS"):
+        print("::warning title=港股K线部分失败::%d/%d 只失败，保留原文件"
+              % (len(failed_codes), len(todo)), flush=True)
 
     print("3/4 抓取港股F10主要指标(批量) ...", flush=True)
     fin = fetch_financial(codes)
@@ -717,9 +789,12 @@ def build():
             json.dump(comp_file, f, ensure_ascii=False)
 
     items.sort(key=lambda x: (x.get("dy") is None, -(x.get("dy") or 0)))
-    snap = {"date": today, "updated_at": now, "total": len(items),
+    # date = 行情真实日期：成分实时抓到时为今天；用缓存成分时取K线最新日期。
+    data_date = today if COMPONENTS_SOURCE != "snapshot-cache" else (kline_date or COMPONENTS_ASOF)
+    snap = {"date": data_date, "updated_at": now, "total": len(items),
             "market": "港股通", "components_source": COMPONENTS_SOURCE,
-            "components_asof": COMPONENTS_ASOF, "items": items}
+            "components_asof": COMPONENTS_ASOF, "kline_date": kline_date,
+            "kline_failed": len(failed_codes), "items": items}
     with open(os.path.join(data_root, "snapshot.json"), "w", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False)
     print("已写 data/hk/snapshot.json | 港股通 %d 只" % len(items), flush=True)

@@ -722,7 +722,12 @@ def main():
             if done % 100 == 0:
                 print("   K线进度 %d/%d" % (done, len(todo)), flush=True)
     usable = sum(bool(klines.get(c)) and bool(raw_klines.get(c)) for c in codes)
-    print("   K线可用 %d/%d；本轮失败 %d 只" % (usable, len(codes), len(failed_codes)), flush=True)
+    behind = sum(1 for c in codes if not (klines.get(c) and klines[c][-1]["d"] >= kline_target
+                                          and raw_klines.get(c) and raw_klines[c][-1]["d"] >= kline_target))
+    print("   K线可用 %d/%d；本轮失败 %d 只；未到 %s 的 %d 只（腾讯 成功%d/失败%d，新浪 成功%d/失败%d）"
+          % (usable, len(codes), len(failed_codes), kline_target, behind,
+             sm.TENCENT_GUARD.ok_count, sm.TENCENT_GUARD.fail_count,
+             sm.SINA_GUARD.ok_count, sm.SINA_GUARD.fail_count), flush=True)
     if failed_codes:
         print("   待补抓代码: " + ",".join(sorted(failed_codes)), flush=True)
 

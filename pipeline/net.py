@@ -73,3 +73,53 @@ def fetch_json(url, params=None, headers=None, referer=None, timeout=20,
     text = fetch(url, params=params, headers=headers, referer=referer,
                  timeout=timeout, retries=retries, delay=delay)
     return json.loads(text)
+
+
+class SourceGuard:
+    """单个数据源的熔断 + 限速：连续整只失败 max_fail 次后本进程内不再请求该源。
+
+    只统计“整只抓取失败”（如腾讯所有窗口都 501/5xx），不统计早期窗口无数据的 501，
+    避免把正常的上市前空窗误判为封禁。min_interval 是跨线程的最小请求间隔（秒）。
+    """
+
+    def __init__(self, name, max_fail=8, min_interval=0.0):
+        import threading
+        self.name = name
+        self.max_fail = max_fail
+        self.min_interval = min_interval
+        self._lock = threading.Lock()
+        self._streak = 0
+        self._next = 0.0
+        self.tripped = False
+        self.ok_count = 0
+        self.fail_count = 0
+
+    def blocked(self):
+        with self._lock:
+            return self.tripped
+
+    def ok(self):
+        with self._lock:
+            self._streak = 0
+            self.ok_count += 1
+
+    def fail(self, exc=None):
+        with self._lock:
+            self._streak += 1
+            self.fail_count += 1
+            if self.tripped or self._streak < self.max_fail:
+                return
+            self.tripped = True
+        print("::warning title=%s 熔断::连续 %d 只失败，本轮停止请求该源，改用备用源（最后错误：%s）"
+              % (self.name, self.max_fail, str(exc)[-160:]), flush=True)
+
+    def wait(self):
+        """限速：多线程共享同一节奏，避免狂刷备用源。"""
+        if self.min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next)
+            self._next = slot + self.min_interval
+        if slot > now:
+            time.sleep(slot - now)
