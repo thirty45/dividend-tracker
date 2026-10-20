@@ -1033,7 +1033,8 @@ function renderHkList() {
   tbody.innerHTML = list.map(hkRowHTML).join("");
   const info = [`显示 ${list.length} / ${state.hkStocks.length} 只`];
   if (state.hkSearch.trim()) info.push("搜索：" + state.hkSearch.trim());
-  info.push("数据生成 " + (state.hkSnap?.date || "—"));
+  info.push("数据日期 " + (state.hkSnap?.date || "—"));
+  if (state.hkSnap?.kline_date) info.push("K线至 " + state.hkSnap.kline_date);
   if (state.hkSnap?.components_source === "snapshot-cache") {
     info.push("成分及估值沿用 " + (state.hkSnap.components_asof || "—") + " 缓存；收盘价按可用K线更新");
   }
