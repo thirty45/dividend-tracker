@@ -14,7 +14,12 @@ from pathlib import Path
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE))
 from pipeline import sources_market as sm
-from pipeline.kline import valid_bars, read_series, merge_bars, fetched_span_complete
+from pipeline.kline import (valid_bars, read_series, merge_bars, fetched_span_complete,
+                            align_adjusted_history)
+
+# 陈旧比例阈值：超过 WARN 输出 ::warning::，超过 FAIL 让本步骤失败（不提交、不部署陈旧数据）。
+STALE_WARN_RATIO = float(os.environ.get('KLINE_STALE_WARN_RATIO', '0.10'))
+STALE_FAIL_RATIO = float(os.environ.get('KLINE_STALE_FAIL_RATIO', '0.50'))
 
 
 
@@ -72,12 +77,39 @@ def _improves(old, bars):
     return bars[-1]['d'] > prev[-1]['d'] and len(bars) >= len(prev)
 
 
+def refresh_stale(path, old, code, target, qfq, folder):
+    """完整历史但最后一根K线落后于目标交易日：从末尾前 15 天增量补抓并合并。"""
+    last = old['bars'][-1]['d']
+    begin = (datetime.date.fromisoformat(last) - datetime.timedelta(days=15)).strftime('%Y%m%d')
+    try:
+        if qfq:
+            _, bars = sm.fetch_kline(code, begin, '20500101', target)
+        else:
+            bars = sm.fetch_kline_raw(code, begin, '20500101', target)
+        if not valid_bars(bars) or bars[-1]['d'] <= last:
+            raise RuntimeError('各数据源均未取到 %s 之后的K线' % last)
+        prev = align_adjusted_history(old['bars'], bars) if qfq else old['bars']
+        merged = merge_bars(prev, bars)
+        if not valid_bars(merged):
+            raise RuntimeError('merged series invalid')
+    except Exception as exc:
+        return dict(code=code, mode=folder, status='failed', errors=[str(exc)[:400]])
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
+    payload = dict(old, date=merged[-1]['d'], updated=now, bars=merged,
+                   coverage_end=merged[-1]['d'], coverage_complete=merged[-1]['d'] >= target)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    return dict(code=code, mode=folder, status='updated', count=len(merged),
+                start=merged[0]['d'], end=merged[-1]['d'], errors=[])
+
+
 def repair_one(data, code, name, target, cfg, recent_first=False):
     results = []
     for qfq, folder in ((True, 'kline'), (False, 'kline_raw')):
         path = data / folder / (code + '.json')
         old = read_series(path)
         if old and old.get('history_complete') is not False:
+            if old['bars'][-1]['d'] < target:
+                results.append(refresh_stale(path, old, code, target, qfq, folder))
             continue
         if recent_first and old and old['bars'][-1]['d'] >= target:
             continue
@@ -140,9 +172,10 @@ def repair_one(data, code, name, target, cfg, recent_first=False):
 def write_report(data, report):
     (data / 'meta').mkdir(parents=True, exist_ok=True)
     (data / 'meta/kline_coverage.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-    line = ('K线覆盖：%d/%d 套可用；缺失 %d；陈旧 %d；早期历史待补 %d'
+    line = ('K线覆盖：%d/%d 套可用；缺失 %d；陈旧 %d（%.1f%%，目标日 %s）；早期历史待补 %d'
             % (report['usable_series'], report['expected_series'], len(report['missing']),
-               len(report['stale']), len(report['partial_history'])))
+               len(report['stale']), report.get('stale_ratio', 0) * 100, report['target_date'],
+               len(report['partial_history'])))
     print(line, flush=True)
     if os.environ.get('GITHUB_ACTIONS'):
         print('::notice title=Kline coverage::' + line, flush=True)
@@ -175,7 +208,7 @@ def main():
     report = audit(args.data_root, stocks, target)
     repaired = []
     if args.repair:
-        todo = sorted({x.split(':')[0] for x in report['missing'] + report['partial_history']})
+        todo = sorted({x.split(':')[0] for x in report['missing'] + report['partial_history'] + report['stale']})
         if args.codes:
             wanted = set(args.codes.split(','))
             todo = [c for c in todo if c in wanted]
@@ -192,7 +225,17 @@ def main():
         report = audit(args.data_root, stocks, target)
     report['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')
     report['repairs'] = repaired
+    report['stale_ratio'] = round(len(report['stale']) / report['expected_series'], 4) if report['expected_series'] else 0
     write_report(args.data_root, report)
+    ratio = report['stale_ratio']
+    if ratio > STALE_WARN_RATIO:
+        print('::warning title=K线陈旧::%d/%d 套K线未更新到 %s（%.1f%%，阈值 %.0f%%）'
+              % (len(report['stale']), report['expected_series'], target, ratio * 100,
+                 STALE_WARN_RATIO * 100), flush=True)
+    if ratio > STALE_FAIL_RATIO:
+        print('::error title=K线陈旧超限::陈旧 %.1f%% 超过 %.0f%%，拒绝提交/部署陈旧指标'
+              % (ratio * 100, STALE_FAIL_RATIO * 100), flush=True)
+        return 1
     # Early-history gaps (history_complete=false) are usable and do not block deploy.
     # Absent files, blank JSON, and broken OHLC stay in `missing` and still refuse deploy.
     if not stocks or report['missing']:
