@@ -88,7 +88,9 @@ class CalendarTests(unittest.TestCase):
         self.assertTrue(future)
         self.assertEqual([event["status"] for event in future], ["待公告"] * len(future))
         self.assertEqual(events[:len(future)], future)
-        self.assertEqual({event["id"] for event in past}, {"000016-2026-06", "000300-2026-06"})
+        self.assertEqual({event["id"] for event in past}, {
+            "000016-2026-06", "000300-2026-06",
+            "000922-2025-12", "H30269-2025-12", "000015-2025-12"})
 
     def test_seed_lists_match_official_attachment_counts(self):
         sse = ANNOUNCED["000016-2026-06"]
@@ -187,3 +189,49 @@ class RefreshFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecentEffectiveTests(unittest.TestCase):
+    """每个指数都保留最近一次已生效的审视，红利三指数显示 2025-12 名单。"""
+
+    def test_dividend_indexes_keep_2025_12_effective(self):
+        events = build_events(datetime.date(2026, 10, 21))
+        past = {e["index_code"]: e for e in events if e["status"] == "已生效"}
+        self.assertEqual(set(past), {"000922", "H30269", "000015", "000016", "000300"})
+        for code in ("000922", "H30269", "000015"):
+            ev = past[code]
+            self.assertEqual(ev["id"], code + "-2025-12")
+            self.assertEqual(ev["announce_date"], "2025-11-28")
+            self.assertEqual(ev["notice_effective"], "2025-12-12")
+            self.assertEqual(ev["effective_date"], "2025-12-15")
+        self.assertEqual((len(past["000922"]["adds"]), len(past["000922"]["removes"])), (20, 20))
+        self.assertEqual((len(past["000015"]["adds"]), len(past["000015"]["removes"])), (10, 10))
+        self.assertEqual(len(past["H30269"]["adds"]), 18)
+        self.assertEqual(past["H30269"]["removes"], [])
+        self.assertTrue(past["H30269"]["removes_note"])
+        # 半年审的宽基仍取 2026-06，不额外补 2025-12。
+        self.assertEqual(past["000016"]["id"], "000016-2026-06")
+        self.assertEqual(sum(1 for e in events if e["index_code"] == "000016" and e["status"] == "已生效"), 1)
+
+    def test_seed_lists_are_clean(self):
+        for key in ("000922-2025-12", "H30269-2025-12", "000015-2025-12"):
+            seed = ANNOUNCED[key]
+            adds = {c for c, _ in seed["adds"]}
+            removes = {c for c, _ in seed["removes"]}
+            self.assertEqual(len(adds), len(seed["adds"]), key)
+            self.assertEqual(len(removes), len(seed["removes"]), key)
+            self.assertFalse(adds & removes, key)
+            for code, name in seed["adds"] + seed["removes"]:
+                self.assertRegex(code, r"^\d{6}$")
+                self.assertTrue(name)
+
+    def test_after_2026_12_drops_2025_12(self):
+        events = build_events(datetime.date(2026, 12, 20))
+        ids = {e["id"] for e in events}
+        self.assertNotIn("000922-2025-12", ids)
+        self.assertIn("000922-2026-12", ids)
+
+    def test_past_group_sorted_newest_first(self):
+        events = build_events(datetime.date(2026, 10, 21))
+        past = [e["effective_date"] for e in events if e["status"] == "已生效"]
+        self.assertEqual(past, sorted(past, reverse=True))
