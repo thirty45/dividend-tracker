@@ -1,7 +1,7 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-10-18-rebalance";
+const APP_VERSION = "2026-10-21-rebalance-recent";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 window.APP_VERSION = APP_VERSION;
@@ -1969,6 +1969,16 @@ function renderRankings() {
     tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; }));
 }
 
+// 调出：名单缺失时显示 removes_note；有存档来源时附链接。
+function rebRemoves(ev) {
+  if (!(ev.removes && ev.removes.length) && ev.removes_note) {
+    return '<span class="reb-sub">' + esc(ev.removes_note) + "</span>";
+  }
+  const link = ev.removes_url
+    ? ' <a class="reb-sub" href="' + esc(ev.removes_url) + '" target="_blank" rel="noopener">调出依据</a>' : "";
+  return rebNames(ev.removes) + link;
+}
+
 function rebNames(rows) {
   if (!rows || !rows.length) return "—";
   return rows.map((row) => {
@@ -2023,7 +2033,7 @@ function renderRebalance() {
       "<td>" + esc(ev.announce_date || "—") + "</td>" +
       "<td>" + esc(ev.effective_date || "—") + effSub + "</td>" +
       '<td class="reb-names">' + rebNames(ev.adds) + "</td>" +
-      '<td class="reb-names">' + rebNames(ev.removes) + "</td>" +
+      '<td class="reb-names">' + rebRemoves(ev) + "</td>" +
       '<td class="reb-src">' + src + list + "</td>" +
       '<td><span class="reb-status ' + rebStatusClass(ev.status) + '">' + esc(ev.status || "—") + "</span></td></tr>";
   };

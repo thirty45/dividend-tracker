@@ -21,7 +21,9 @@
   1. 拉取上交所指数信息披露列表，打开标题命中上述指数的公告页。
   2. 尝试中证指数公司公告接口。该接口目前经常返回 500。
   3. 任一来源失败都保留编制方案日历和已核对的调入调出，不把页面刷空。
-调入调出只来自已核对的官方附件，或公告正文里能直接解析出的代码+简称。
+调入调出只来自已核对的官方附件、公告正文里能直接解析出的代码+简称，
+或成分页纳入日期与存档快照差集（见 ANNOUNCED_2025_12）。
+每个指数总保留最近一次已生效的审视，供首页「近期已生效」显示。
 PDF 附件不在每日任务里解析。
 """
 
@@ -231,6 +233,91 @@ ANNOUNCED = {
 }
 
 
+# 2025-11-28 公告、2025-12-12 收市后生效（2025-12-15 起按新样本）的三只红利指数年度调样。
+# 中证附件只列宽基，红利类名单当时挂在各指数页「拟生效样本」，现已下线。
+# 调入：新浪财经最新成分页中纳入日期为 2025-12-15 的样本（2026-10 实抓）。
+# 调出：Internet Archive 2025-11 快照的成分减去现行成分；000922 20 进 20 出、000015 10 进 10 出，
+#       与媒体报道（浦发银行、宝钢股份、华菱钢铁、深高速等）一致。
+# H30269 新浪页无存档快照，调出名单未取得完整官方来源，留空并在 removes_note 说明。
+CSI_202512_PDF = (
+    "https://oss-ch.csindex.com.cn/notice/20251128165753-"
+    "%E9%99%84%E4%BB%B6%EF%BC%9A%E9%83%A8%E5%88%86%E6%8C%87%E6%95%B0%E6%A0%B7%E6%9C%AC%E8%B0%83%E6%95%B4%E5%90%8D%E5%8D%95.pdf"
+)
+SINA_COMPONENT = "https://vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent/indexid/{id}.phtml"
+WAYBACK_COMPONENT = "https://web.archive.org/web/{ts}/http://vip.stock.finance.sina.com.cn/corp/go.php/vII_NewestComponent/indexid/{id}.phtml"
+DIV_202512_NOTE = (
+    "中证指数公司 2025-11-28 公布，2025-12-12 收市后生效，2025-12-15 起按新样本计算。"
+    "调入取新浪成分页纳入日期 2025-12-15 的样本；调出为 2025-11 存档成分与现行成分之差。"
+)
+
+ANNOUNCED_2025_12 = {
+    "000922-2025-12": {
+        "announce_date": "2025-11-28",
+        "source_url": CSI_202512_PDF,
+        "source_title": "中证指数公司 2025-11-28 定期调整公告附件",
+        "list_url": SINA_COMPONENT.format(id="000922"),
+        "removes_url": WAYBACK_COMPONENT.format(ts="20251109125411", id="000922"),
+        "adds": [
+            ["000408", "藏格矿业"], ["000672", "上峰水泥"], ["000933", "神火股份"],
+            ["002043", "兔宝宝"], ["002154", "报喜鸟"], ["002540", "亚太科技"],
+            ["002572", "索菲亚"], ["002756", "永兴材料"], ["301109", "军信股份"],
+            ["600036", "招商银行"], ["600096", "云天化"], ["600502", "安徽建工"],
+            ["600737", "中粮糖业"], ["600938", "中国海油"], ["601001", "晋控煤业"],
+            ["601187", "厦门银行"], ["601598", "中国外运"], ["601717", "中创智领"],
+            ["601916", "浙商银行"], ["603967", "中创物流"],
+        ],
+        "removes": [
+            ["000581", "威孚高科"], ["000830", "鲁西化工"], ["000932", "华菱钢铁"],
+            ["000937", "冀中能源"], ["002048", "宁波华翔"], ["002088", "鲁阳节能"],
+            ["002327", "富安娜"], ["002932", "明德生物"], ["600000", "浦发银行"],
+            ["600019", "宝钢股份"], ["600325", "华发股份"], ["600377", "宁沪高速"],
+            ["600395", "盘江股份"], ["600548", "深高速"], ["600694", "大商股份"],
+            ["600782", "新钢股份"], ["601636", "旗滨集团"], ["603878", "武进不锈"],
+            ["605368", "蓝天燃气"], ["688606", "奥泰生物"],
+        ],
+        "note": DIV_202512_NOTE,
+    },
+    "H30269-2025-12": {
+        "announce_date": "2025-11-28",
+        "source_url": CSI_202512_PDF,
+        "source_title": "中证指数公司 2025-11-28 定期调整公告附件",
+        "list_url": SINA_COMPONENT.format(id="h30269"),
+        "adds": [
+            ["000001", "平安银行"], ["000333", "美的集团"], ["000429", "粤高速A"],
+            ["000651", "格力电器"], ["000708", "中信特钢"], ["002233", "塔牌集团"],
+            ["002839", "张家港行"], ["600461", "洪城环境"], ["600566", "济川药业"],
+            ["600750", "江中药业"], ["600757", "长江传媒"], ["600803", "新奥股份"],
+            ["600863", "内蒙华电"], ["600873", "梅花生物"], ["600938", "中国海油"],
+            ["601369", "陕鼓动力"], ["601665", "齐鲁银行"], ["601928", "凤凰传媒"],
+        ],
+        "removes": [],
+        "removes_note": "调出 18 只，完整名单未取得可核对来源",
+        "note": DIV_202512_NOTE + "H30269 无调整前成分存档，调出名单暂缺。",
+    },
+    "000015-2025-12": {
+        "announce_date": "2025-11-28",
+        "source_url": CSI_202512_PDF,
+        "source_title": "中证指数公司 2025-11-28 定期调整公告附件",
+        "list_url": SINA_COMPONENT.format(id="000015"),
+        "removes_url": WAYBACK_COMPONENT.format(ts="20251108050949", id="000015"),
+        "adds": [
+            ["600039", "四川路桥"], ["600096", "云天化"], ["600737", "中粮糖业"],
+            ["600938", "中国海油"], ["601001", "晋控煤业"], ["601168", "西部矿业"],
+            ["601717", "中创智领"], ["601838", "成都银行"], ["601857", "中国石油"],
+            ["601916", "浙商银行"],
+        ],
+        "removes": [
+            ["600019", "宝钢股份"], ["600057", "厦门象屿"], ["600373", "中文传媒"],
+            ["600461", "洪城环境"], ["600548", "深高速"], ["600729", "重庆百货"],
+            ["601098", "中南传媒"], ["601928", "凤凰传媒"], ["603519", "立霸股份"],
+            ["603886", "元祖股份"],
+        ],
+        "note": DIV_202512_NOTE,
+    },
+}
+ANNOUNCED.update(ANNOUNCED_2025_12)
+
+
 def today_bj(now=None):
     clock = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     return clock.date()
@@ -289,6 +376,18 @@ def scheduled_slots(index, as_of, past_days=PAST_DAYS, future_days=FUTURE_DAYS):
     return slots
 
 
+def latest_past_slot(index, as_of):
+    """最近一次已生效的定期审视。窗口里没有已生效记录时用它补一条「近期已生效」。"""
+    best = None
+    for year in (as_of.year - 1, as_of.year):
+        for month in index["months"]:
+            friday = second_friday(year, month)
+            effective = next_trading_day(friday)
+            if effective <= as_of and (best is None or effective > best[2]):
+                best = (month, friday, effective)
+    return best
+
+
 def _base_event(index, month, friday, effective, as_of):
     event_id = "%s-%04d-%02d" % (index["code"], effective.year, month)
     seeded = ANNOUNCED.get(event_id) or {}
@@ -312,6 +411,8 @@ def _base_event(index, month, friday, effective, as_of):
         "source_url": seeded.get("source_url") or index["methodology_url"],
         "source_title": seeded.get("source_title") or ("%s指数编制方案" % index["name"]),
         "list_url": seeded.get("list_url") or "",
+        "removes_url": seeded.get("removes_url") or "",
+        "removes_note": seeded.get("removes_note") or "",
         "status": status_of(announce, _iso(effective), as_of),
         "note": note,
     }
@@ -593,7 +694,12 @@ def _sort_events(events, as_of):
 def build_events(as_of, notices=None):
     events = []
     for index in UNIVERSE:
-        for month, friday, effective in scheduled_slots(index, as_of):
+        slots = scheduled_slots(index, as_of)
+        if not any(effective <= as_of for _, _, effective in slots):
+            last = latest_past_slot(index, as_of)
+            if last:
+                slots.insert(0, last)
+        for month, friday, effective in slots:
             events.append(_base_event(index, month, friday, effective, as_of))
     apply_notices(events, notices)
     return _sort_events(events, as_of)
