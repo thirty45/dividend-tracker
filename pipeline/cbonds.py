@@ -106,6 +106,54 @@ def fetch_quotes(host):
     return rows
 
 
+# push2 行情 502 时的备用：数据中心 RPT_BOND_CB_LIST + quoteColumns（服务端回填现价/转股价值/溢价率）。
+DC_QUOTE_COLUMNS = ("f2~01~CONVERT_STOCK_CODE~CONVERT_STOCK_PRICE,"
+                    "f235~10~SECURITY_CODE~TRANSFER_PRICE,"
+                    "f236~10~SECURITY_CODE~TRANSFER_VALUE,"
+                    "f2~10~SECURITY_CODE~CURRENT_BOND_PRICE,"
+                    "f237~10~SECURITY_CODE~TRANSFER_PREMIUM_RATIO")
+DC_FALLBACK_LIMIT = 100  # 与 push2 主源实际返回的最近 100 只（按申购日倒序）口径一致
+
+
+def fetch_quotes_dc(today=None):
+    """备用行情：返回 ({code: push2 同名字段 row}, {code: 发行明细 row})。"""
+    today = (today or datetime.date.today()).isoformat()
+    quotes, issue = {}, {}
+    for pn in (1, 2):
+        url = DC_URL + "?" + urllib.parse.urlencode({
+            "reportName": "RPT_BOND_CB_LIST", "columns": "ALL",
+            "quoteColumns": DC_QUOTE_COLUMNS, "quoteType": 0,
+            "pageSize": 200, "pageNumber": pn, "source": "WEB", "client": "WEB",
+            "sortColumns": "PUBLIC_START_DATE", "sortTypes": "-1",
+        })
+        txt = fetch(url, referer="https://data.eastmoney.com/kzz/default.html")
+        try:
+            data = (json.loads(txt).get("result") or {}).get("data") or [] if txt else []
+        except Exception:  # noqa: BLE001
+            data = []
+        for r in data:
+            code = r.get("SECURITY_CODE")
+            expire = d10(r.get("EXPIRE_DATE"))
+            if (not code or not d10(r.get("PUBLIC_START_DATE")) or r.get("DELIST_DATE")
+                    or (expire and expire < today)):
+                continue
+            issue[code] = r
+            quotes[code] = {
+                "f12": code, "f14": r.get("SECURITY_NAME_ABBR") or "",
+                "f2": r.get("CURRENT_BOND_PRICE"), "f3": None,
+                "f232": r.get("CONVERT_STOCK_CODE") or "",
+                "f234": r.get("SECURITY_SHORT_NAME") or "",
+                "f235": r.get("TRANSFER_PRICE"), "f236": r.get("TRANSFER_VALUE"),
+                "f237": r.get("TRANSFER_PREMIUM_RATIO"),
+                "f243": r.get("PUBLIC_START_DATE"),
+            }
+            if len(quotes) >= DC_FALLBACK_LIMIT:
+                return quotes, issue
+        if len(data) < 200:
+            break
+    return quotes, issue
+
+
 def fetch_issue():
     """拉取 RPT_BOND_CB_LIST（发行/申购明细），按代码索引。"""
     out = {}
@@ -254,10 +302,16 @@ def build():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     host = pick_host()
     quotes = fetch_quotes(host)
+    source = host
+    if quotes:
+        issue = fetch_issue()
+    else:
+        print("push2 行情不可用，改用数据中心 RPT_BOND_CB_LIST 备用源", flush=True)
+        quotes, issue = fetch_quotes_dc(today)
+        source = "datacenter-RPT_BOND_CB_LIST"
     if not quotes:
-        raise RuntimeError("可转债行情接口返回空数据，保留原快照，禁止覆盖为空列表")
-    issue = fetch_issue()
-    print("行情: %d 只 (host=%s) | 发行明细: %d 条" % (len(quotes), host, len(issue)))
+        raise RuntimeError("可转债行情主备接口均返回空数据，保留原快照，禁止覆盖为空列表")
+    print("行情: %d 只 (source=%s) | 发行明细: %d 条" % (len(quotes), source, len(issue)))
 
     listed, pending = [], []
     for code, q in quotes.items():
@@ -348,6 +402,7 @@ def build():
     out = {
         "date": today.isoformat(),
         "updated_at": now,
+        "source": source,
         "total": {"listed": len(listed), "pending": len(pending)},
         "listed": listed,
         "pending": pending,

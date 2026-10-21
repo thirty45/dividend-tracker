@@ -5,7 +5,7 @@ import datetime
 import re
 import threading
 
-from .net import FetchError, fetch, fetch_json
+from .net import FetchError, SourceGuard, fetch, fetch_json
 from .kline import KlineBars, usable_bar, valid_bars
 
 DC_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
@@ -18,6 +18,11 @@ SINA_INDEX_URL = ("http://vip.stock.finance.sina.com.cn/corp/go.php/"
 # 经验证与东财不复权日K线年末收盘价逐项一致，可用于补齐早年（东财K线仅到2019/2021）。
 SINA_KLINE_URL = ("https://money.finance.sina.com.cn/quotes_service/"
                   "api/json_v2.php/CN_MarketData.getKLineData")
+SINA_QFQ_URL = "https://finance.sina.com.cn/realstock/company/%s/qfq.js"
+
+# 腾讯对 GitHub runner 会整批返回 501；连续整只失败后熔断，改走新浪日K。
+TENCENT_GUARD = SourceGuard("腾讯K线", max_fail=8)
+SINA_GUARD = SourceGuard("新浪K线", max_fail=8, min_interval=0.2)
 
 
 def fetch_sina_yearly_close(code):
@@ -496,11 +501,116 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
                      gaps=hard_gaps + other_gaps)
 
 
+_sina_factor_cache = {}
+
+
+def _sina_qfq_factors(sym):
+    """新浪前复权因子 [(起始日, 因子)]，升序；qfq 价 = 不复权价 / 因子。"""
+    if sym in _sina_factor_cache:
+        return _sina_factor_cache[sym]
+    SINA_GUARD.wait()
+    text = fetch(SINA_QFQ_URL % sym, referer="https://finance.sina.com.cn/",
+                 timeout=15, retries=2, delay=1.0)
+    factors = sorted((d, float(f)) for d, f in re.findall(
+        r'"d"\s*:\s*"(\d{4}-\d{2}-\d{2})"\s*,\s*"f"\s*:\s*"([0-9.]+)"', text))
+    if not factors and '"total":0' not in text.replace(" ", ""):
+        raise RuntimeError("新浪复权因子为空")
+    _sina_factor_cache[sym] = factors
+    return factors
+
+
+def _apply_qfq(bars, factors):
+    if not factors:
+        return bars
+    out, i = [], 0
+    for b in bars:
+        while i + 1 < len(factors) and factors[i + 1][0] <= b["d"]:
+            i += 1
+        f = factors[i][1] if factors[i][1] > 0 else 1.0
+        out.append(dict(b, **{k: round(b[k] / f, 3) for k in ("o", "c", "h", "l")}))
+    return out
+
+
+def fetch_kline_sina(code, beg="19900101", qfq=True):
+    """新浪日K备用源：不复权 OHLC（成交量股→手），qfq=True 时用新浪复权因子换算前复权。"""
+    sym = _tencent_market(code) + code
+    begin = _norm_date(beg)
+    try:
+        days = (datetime.date.today() - datetime.date.fromisoformat(begin)).days
+    except ValueError:
+        days = 20000
+    datalen = max(30, min(10000, int(days * 0.7) + 30))
+    SINA_GUARD.wait()
+    rows = fetch_json(SINA_KLINE_URL, params={
+        "symbol": sym, "scale": "240", "ma": "no", "datalen": str(datalen)},
+        referer="https://finance.sina.com.cn/", timeout=20, retries=2, delay=1.0)
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("新浪日K为空")
+    bars = []
+    for r in rows:
+        try:
+            bar = {"d": str(r["day"])[:10], "o": float(r["open"]), "c": float(r["close"]),
+                   "h": float(r["high"]), "l": float(r["low"]), "v": float(r["volume"]) / 100.0}
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bar["d"] >= begin and usable_bar(bar):
+            bars.append(bar)
+    if qfq:
+        bars = _apply_qfq(bars, _sina_qfq_factors(sym))
+    if not bars:
+        raise RuntimeError("新浪日K无有效数据")
+    complete = len(rows) < datalen or str(rows[0].get("day", ""))[:10] <= begin
+    result = KlineBars(bars, history_complete=complete,
+                       gaps=[] if complete else ["新浪日K仅取到 %s 起" % bars[0]["d"]])
+    result.source = "sina"
+    return result
+
+
+def _tencent_then_sina(code, tencent_call, sina_beg, qfq, min_date=None):
+    """腾讯优先（未熔断时），整只失败或未覆盖 min_date 时切到新浪。"""
+    first_err, tbars = None, None
+    if TENCENT_GUARD.blocked():
+        first_err = RuntimeError("腾讯K线已熔断")
+    else:
+        try:
+            tbars = tencent_call()
+            TENCENT_GUARD.ok()
+            if min_date is None or (tbars and tbars[-1]["d"] >= min_date):
+                return tbars
+        except Exception as exc:  # noqa: BLE001
+            TENCENT_GUARD.fail(exc)
+            first_err = exc
+    if SINA_GUARD.blocked():
+        sina_err = RuntimeError("新浪K线已熔断")
+    else:
+        try:
+            sbars = fetch_kline_sina(code, sina_beg, qfq)
+            SINA_GUARD.ok()
+            if tbars and sbars[-1]["d"] <= tbars[-1]["d"]:
+                return tbars
+            return sbars
+        except Exception as exc:  # noqa: BLE001
+            SINA_GUARD.fail(exc)
+            sina_err = exc
+    if tbars:
+        return tbars
+    err = RuntimeError("腾讯/新浪日K均失败：%s；新浪：%s" % (str(first_err)[:300], str(sina_err)[:160]))
+    err.unavailable = bool(getattr(first_err, "unavailable", False))
+    raise err from first_err
+
+
 def fetch_kline_recent(code, qfq=True):
     """仅取近期约700根日K；调用方必须标记早期历史待补，不冒充完整历史。
 
-    根数接口若返回 400/404/501，只再试一个日期窗口，不反复重试同一个 501。
+    根数接口若返回 400/404/501，只再试一个日期窗口，不反复重试同一个 501；
+    腾讯整只失败时改用新浪近 1000 天日K。
     """
+    beg = (datetime.date.today() - datetime.timedelta(days=1000)).strftime("%Y%m%d")
+    bars = _tencent_then_sina(code, lambda: _fetch_kline_recent_tencent(code, qfq), beg, qfq)
+    return KlineBars(bars, history_complete=False, gaps=getattr(bars, "gaps", None))
+
+
+def _fetch_kline_recent_tencent(code, qfq=True):
     sym = _tencent_market(code) + code
     try:
         bars = _fetch_tencent_count(sym, qfq, 700)
@@ -606,7 +716,7 @@ def _em_note(ok):
 
 def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
     """前复权日K线 -> (name, [dict(d,o,h,l,c,v), ...])。
-    优先东方财富，连续失败自动切换腾讯备用源。
+    优先东方财富，连续失败自动切换腾讯，腾讯熔断/失败再切新浪（新浪复权因子换算）。
     min_date: 期望覆盖到的最新日期；若返回数据未覆盖则视为陈旧，切换到备用源。"""
     if not _em_blocked():
         name, bars = _fetch_kline_em(code, beg, end)
@@ -614,7 +724,7 @@ def fetch_kline(code, beg="19900101", end="20500101", min_date=None):
             _em_note(True)
             return name, bars
         _em_note(False)
-    tbars = _fetch_kline_tencent(code, beg, end)
+    tbars = _tencent_then_sina(code, lambda: _fetch_kline_tencent(code, beg, end), beg, True, min_date)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s K线最新仅到 %s（期望 %s）"
               % (code, tbars[-1]["d"], min_date), flush=True)
@@ -628,7 +738,7 @@ def _fetch_kline_tencent_raw(code, beg, end):
 
 
 def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
-    """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day。"""
+    """不复权日K线 -> bars。优先东方财富 fqt=0，连续失败回退腾讯 day，再回退新浪日K。"""
     if not _em_blocked():
         markets = [1, 0] if _tencent_market(code) == "sh" else [0, 1]
         for market in markets:
@@ -657,7 +767,7 @@ def fetch_kline_raw(code, beg="19900101", end="20500101", min_date=None):
             except Exception:  # noqa: BLE001
                 continue
         _em_note(False)
-    tbars = _fetch_kline_tencent_raw(code, beg, end)
+    tbars = _tencent_then_sina(code, lambda: _fetch_kline_tencent_raw(code, beg, end), beg, False, min_date)
     if min_date is not None and tbars and tbars[-1]["d"] < min_date:
         print("   警告: %s 不复权K线最新仅到 %s（期望 %s）"
               % (code, tbars[-1]["d"], min_date), flush=True)
