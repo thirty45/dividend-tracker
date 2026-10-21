@@ -207,6 +207,19 @@ class HkTests(unittest.TestCase):
         self.assertAlmostEqual(bars[0]["c"], 9.0)
         self.assertAlmostEqual(bars[0]["h"], 9.45)
 
+    def test_yahoo_inconsistent_high_low_is_clamped(self):
+        # 实抓 0525.HK 全历史有 8 根 high<open 之类的坏 bar，整只曾被 valid_bars 拒掉。
+        bad = json.loads(json.dumps(YAHOO))
+        q = bad["chart"]["result"][0]["indicators"]["quote"][0]
+        q["high"][0] = 9.0   # 低于 open/close
+        q["low"][1] = 12.0   # 高于 open/close
+        with mock.patch.object(hk, "fetch_json", lambda url, params=None, **kw: bad):
+            bars = hk.fetch_hk_kline_yahoo("00700", "19800101", qfq=False)
+        self.assertEqual(len(bars), 2)
+        for b in bars:
+            self.assertGreaterEqual(b["h"], max(b["o"], b["c"]))
+            self.assertLessEqual(b["l"], min(b["o"], b["c"]))
+
     def test_tencent_501_falls_back_to_yahoo(self):
         def fake(url, params=None, **kw):
             if "gtimg" in url:

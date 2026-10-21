@@ -291,6 +291,8 @@ def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
         except (KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
             continue  # 当天未收盘或停牌的空值
         d = datetime.datetime.fromtimestamp(ts + offset, datetime.timezone.utc).strftime("%Y-%m-%d")
+        # Yahoo 个别日的 high/low 与开收不自洽（如 high<open），整只会被 valid_bars 拒掉；按开收夹回。
+        h, l = max(o, c, h, l), min(o, c, h, l)
         bars.append({"d": d, "o": round(o * f, 3), "c": round(c * f, 3),
                      "h": round(h * f, 3), "l": round(l * f, 3), "v": v})
     by_date = {b["d"]: b for b in bars}
