@@ -301,3 +301,31 @@ class StatusReportTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SourceGuardCooldownTests(unittest.TestCase):
+    """熔断后过了冷却期放行一只试探：成功恢复，失败继续熔断。"""
+
+    def test_probe_after_cooldown(self):
+        from pipeline import net
+        clock = [100.0]
+        with mock.patch.object(net.time, "monotonic", lambda: clock[0]):
+            g = SourceGuard("t", max_fail=2, cooldown=30)
+            g.fail(); g.fail()
+            self.assertTrue(g.blocked())
+            clock[0] += 31
+            self.assertFalse(g.blocked())   # 放行一只试探
+            self.assertTrue(g.blocked())    # 同一周期其余仍熔断
+            g.fail()                        # 试探失败，继续熔断
+            self.assertTrue(g.blocked())
+            clock[0] += 31
+            self.assertFalse(g.blocked())
+            g.ok()                          # 试探成功，恢复
+            self.assertFalse(g.blocked())
+            self.assertEqual(g.trips, 1)
+
+    def test_zero_cooldown_never_reopens(self):
+        g = SourceGuard("t", max_fail=1, cooldown=0)
+        g.fail()
+        self.assertTrue(g.blocked())
+        self.assertTrue(g.blocked())

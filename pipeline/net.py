@@ -76,17 +76,22 @@ def fetch_json(url, params=None, headers=None, referer=None, timeout=20,
 
 
 class SourceGuard:
-    """单个数据源的熔断 + 限速：连续整只失败 max_fail 次后本进程内不再请求该源。
+    """单个数据源的熔断 + 限速：连续整只失败 max_fail 次后暂停请求该源。
 
     只统计“整只抓取失败”（如腾讯所有窗口都 501/5xx），不统计早期窗口无数据的 501，
     避免把正常的上市前空窗误判为封禁。min_interval 是跨线程的最小请求间隔（秒）。
+    熔断后每 cooldown 秒放行一只试探：成功即恢复，失败继续熔断。
+    这样源只是短时 501/限流时，后面的股票还能回到该源，不会整轮都跳过。
     """
 
-    def __init__(self, name, max_fail=8, min_interval=0.0):
+    def __init__(self, name, max_fail=8, min_interval=0.0, cooldown=60.0):
         import threading
         self.name = name
         self.max_fail = max_fail
         self.min_interval = min_interval
+        self.cooldown = cooldown
+        self._reopen_at = 0.0
+        self.trips = 0
         self._lock = threading.Lock()
         self._streak = 0
         self._next = 0.0
@@ -96,12 +101,22 @@ class SourceGuard:
 
     def blocked(self):
         with self._lock:
-            return self.tripped
+            if not self.tripped:
+                return False
+            now = time.monotonic()
+            if self.cooldown and now >= self._reopen_at:
+                self._reopen_at = now + self.cooldown  # 本周期只放行这一只试探
+                return False
+            return True
 
     def ok(self):
         with self._lock:
             self._streak = 0
             self.ok_count += 1
+            recovered = self.tripped
+            self.tripped = False
+        if recovered:
+            print("   %s 试探成功，恢复使用" % self.name, flush=True)
 
     def fail(self, exc=None):
         with self._lock:
@@ -110,8 +125,10 @@ class SourceGuard:
             if self.tripped or self._streak < self.max_fail:
                 return
             self.tripped = True
-        print("::warning title=%s 熔断::连续 %d 只失败，本轮停止请求该源，改用备用源（最后错误：%s）"
-              % (self.name, self.max_fail, str(exc)[-160:]), flush=True)
+            self.trips += 1
+            self._reopen_at = time.monotonic() + self.cooldown
+        print("::warning title=%s 熔断::连续 %d 只失败，暂停请求该源 %ds 后试探，期间改用备用源（最后错误：%s）"
+              % (self.name, self.max_fail, self.cooldown, str(exc)[-160:]), flush=True)
 
     def wait(self):
         """限速：多线程共享同一节奏，避免狂刷备用源。"""
