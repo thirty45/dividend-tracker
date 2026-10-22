@@ -48,6 +48,7 @@ jobs:
             kline-
 
       - name: 每日更新数据
+        id: update
         run: python pipeline/update_daily.py
         env:
           PYTHONUNBUFFERED: '1'
@@ -94,9 +95,13 @@ jobs:
           PYTHONUNBUFFERED: '1'
 
       - name: 补齐并检查个股K线覆盖
+        id: repair
         run: python pipeline/repair_kline.py --repair
         env:
           PYTHONUNBUFFERED: '1'
+          # 陈旧（最后一根K线早于目标交易日）比例：>10% 警告，>50% 本步骤失败、不提交不部署
+          KLINE_STALE_WARN_RATIO: '0.10'
+          KLINE_STALE_FAIL_RATIO: '0.50'
 
       - name: 保存K线缓存
         if: always()
@@ -113,16 +118,16 @@ jobs:
 
       - name: 汇报模块状态
         if: always()
-        run: |
-          echo "| 模块 | 执行结果 |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 基金 | ${{ steps.funds.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 可转债 | ${{ steps.cbonds.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 港股通 | ${{ steps.hk.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 社保基金 | ${{ steps.social.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 国资红利 | ${{ steps.soe.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 调仓提醒 | ${{ steps.rebalance.outcome }} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "失败模块保留此前快照；各模块日期见网页。" >> "$GITHUB_STEP_SUMMARY"
+        run: python pipeline/status_report.py
+        env:
+          OUTCOME_UPDATE: ${{ steps.update.outcome }}
+          OUTCOME_REPAIR: ${{ steps.repair.outcome }}
+          OUTCOME_FUNDS: ${{ steps.funds.outcome }}
+          OUTCOME_CBONDS: ${{ steps.cbonds.outcome }}
+          OUTCOME_HK: ${{ steps.hk.outcome }}
+          OUTCOME_SOCIAL: ${{ steps.social.outcome }}
+          OUTCOME_SOE: ${{ steps.soe.outcome }}
+          OUTCOME_REBALANCE: ${{ steps.rebalance.outcome }}
 
       - name: 提交数据变更
         run: |
