@@ -4,7 +4,7 @@
 数据源（均无需登录）：
   1) 东财行情 clist（港股通成分 b:DLMK0146,b:DLMK0144，约 620 只）
      字段：现价/涨跌幅/市值/PE_TTM/PB/ROE/行业/上市日期 等
-  2) 腾讯港股日K（前复权 + 未复权），历史段+近段两段拼接
+  2) 港股日K：腾讯分段 → 东财 push2his(secid=116.*) → Yahoo（末位）
   3) 东财港股F10 主要指标 RPT_HKF10_FN_MAININDICATOR
      （ROE/EPS/BPS/PE/PB/股息率/每股派息/派息比率/营收/净利等，年报+季报）
 
@@ -34,9 +34,11 @@ from pipeline.kline import valid_bars, coverage_fields as _coverage_fields, merg
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 CLIST_FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
 KLINE_URL = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s.HK"
-# 腾讯对 runner 整批 501 时熔断，改用 Yahoo 港股日K（限速，不狂刷）。
+# 腾讯对 runner 整批 501 时熔断；东财港股日K 作主备用，Yahoo 末位。
 TENCENT_GUARD = SourceGuard("腾讯港股K线", max_fail=8)
+EM_GUARD = SourceGuard("东财港股K线", max_fail=8, min_interval=0.35)
 YAHOO_GUARD = SourceGuard("Yahoo港股K线", max_fail=8, min_interval=0.3)
 FIN_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 FS = "b:DLMK0146,b:DLMK0144"          # 港股通(沪)+港股通(深) 成分
@@ -265,6 +267,59 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
     return [by_date[d] for d in sorted(by_date)]
 
 
+EM_KLINE_HOSTS = (
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://89.push2his.eastmoney.com/api/qt/stock/kline/get",
+)
+
+
+def fetch_hk_kline_em(code, beg=KLINE_START, qfq=True):
+    """东财港股日K备用源。secid=116.<5位>；fqt=1 前复权，fqt=0 不复权。
+
+    push2his 偶发断连，主备两个 CDN 主机各试一次再抛错。
+    """
+    beg_s = str(beg or KLINE_START).replace("-", "")
+    if len(beg_s) != 8 or not beg_s.isdigit():
+        beg_s = KLINE_START
+    end_s = datetime.date.today().strftime("%Y%m%d")
+    params = {
+        "secid": "116.%s" % str(code).zfill(5),
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+        "klt": "101", "fqt": "1" if qfq else "0",
+        "beg": beg_s, "end": end_s, "lmt": "1000000",
+    }
+    EM_GUARD.wait()
+    last_err = None
+    j = None
+    for url in EM_KLINE_HOSTS:
+        try:
+            j = fetch_json(url, params=params, referer="https://quote.eastmoney.com/",
+                           timeout=20, retries=2, delay=1.2)
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_err = exc
+            continue
+    if j is None:
+        raise RuntimeError("东财港股日K请求失败: %s" % str(last_err)[:160]) from last_err
+    klines = ((j.get("data") or {}).get("klines")) or []
+    bars = []
+    for line in klines:
+        p = line.split(",")
+        if len(p) < 6:
+            continue
+        try:
+            bars.append({"d": p[0], "o": float(p[1]), "c": float(p[2]),
+                         "h": float(p[3]), "l": float(p[4]), "v": float(p[5])})
+        except (TypeError, ValueError):
+            continue
+    by_date = {b["d"]: b for b in bars}
+    bars = [by_date[d] for d in sorted(by_date)]
+    if not valid_bars(bars):
+        raise RuntimeError("东财港股日K为空或无效")
+    return bars
+
+
 def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
     """Yahoo 港股日K备用源。qfq=True 时按 adjclose/close 比例换算前复权 OHLC。"""
     try:
@@ -301,10 +356,10 @@ def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
 
 
 def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
-    """港股日K -> bars [{d,o,c,h,l,v}]：腾讯分段抓取优先，整只失败/熔断时改用 Yahoo。"""
-    first_err = None
+    """港股日K -> bars [{d,o,c,h,l,v}]：腾讯 → 东财 → Yahoo。"""
+    errors = []
     if TENCENT_GUARD.blocked():
-        first_err = RuntimeError("腾讯港股K线已熔断")
+        errors.append("腾讯港股K线已熔断")
     else:
         try:
             bars = _fetch_tencent_segments("hk" + code, beg, end, qfq)
@@ -312,14 +367,26 @@ def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
             return bars
         except Exception as exc:  # noqa: BLE001
             TENCENT_GUARD.fail(exc)
-            first_err = exc
+            errors.append("腾讯：%s" % str(exc)[:160])
+    if EM_GUARD.blocked():
+        errors.append("东财港股K线已熔断")
+    else:
+        try:
+            bars = fetch_hk_kline_em(code, beg, qfq)
+            EM_GUARD.ok()
+            return bars
+        except Exception as exc:  # noqa: BLE001
+            EM_GUARD.fail(exc)
+            errors.append("东财：%s" % str(exc)[:160])
     if YAHOO_GUARD.blocked():
-        raise RuntimeError("%s；Yahoo港股K线已熔断" % str(first_err)[:240])
+        errors.append("Yahoo港股K线已熔断")
+        raise RuntimeError("；".join(errors))
     try:
         bars = fetch_hk_kline_yahoo(code, beg, qfq)
     except Exception as exc:  # noqa: BLE001
         YAHOO_GUARD.fail(exc)
-        raise RuntimeError("%s；Yahoo：%s" % (str(first_err)[:240], str(exc)[:160])) from exc
+        errors.append("Yahoo：%s" % str(exc)[:160])
+        raise RuntimeError("；".join(errors)) from exc
     YAHOO_GUARD.ok()
     return bars
 
@@ -677,9 +744,11 @@ def build():
                 json.dump(payload, f, ensure_ascii=False)
         list(ex.map(_write, codes))
     fresh = [c for c in codes if c not in failed_codes and klines.get(c)]
-    print("   K线完成：需更新 %d 只，成功 %d，失败 %d，原已最新 %d（腾讯 成功%d/失败%d，Yahoo 成功%d/失败%d）"
+    print("   K线完成：需更新 %d 只，成功 %d，失败 %d，原已最新 %d"
+          "（腾讯 成功%d/失败%d，东财 成功%d/失败%d，Yahoo 成功%d/失败%d）"
           % (len(todo), len(todo) - len(failed_codes), len(failed_codes), len(codes) - len(todo),
              TENCENT_GUARD.ok_count, TENCENT_GUARD.fail_count,
+             EM_GUARD.ok_count, EM_GUARD.fail_count,
              YAHOO_GUARD.ok_count, YAHOO_GUARD.fail_count), flush=True)
     kline_date = max((klines[c][-1]["d"] for c in fresh), default="")
     if todo and len(failed_codes) == len(todo) and COMPONENTS_SOURCE == "snapshot-cache":
