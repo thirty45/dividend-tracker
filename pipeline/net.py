@@ -130,6 +130,26 @@ class SourceGuard:
         print("::warning title=%s 熔断::连续 %d 只失败，暂停请求该源 %ds 后试探，期间改用备用源（最后错误：%s）"
               % (self.name, self.max_fail, self.cooldown, str(exc)[-160:]), flush=True)
 
+    def await_turn(self, max_wait=None):
+        """熔断时阻塞等待下一个试探窗口，避免整批股票瞬间全跳过。
+
+        返回 True 表示当前线程拿到试探/正常名额（随后应再 wait 限速）；
+        False 表示在 max_wait 内仍熔断。
+        """
+        if max_wait is None:
+            max_wait = max(float(self.cooldown), 1.0) + 2.0
+        deadline = time.monotonic() + max_wait
+        while True:
+            if not self.blocked():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            with self._lock:
+                wake_at = self._reopen_at if self.tripped else time.monotonic()
+            sleep_for = min(2.0, max(0.05, wake_at - time.monotonic()), remaining)
+            time.sleep(sleep_for)
+
     def wait(self):
         """限速：多线程共享同一节奏，避免狂刷备用源。"""
         if self.min_interval <= 0:

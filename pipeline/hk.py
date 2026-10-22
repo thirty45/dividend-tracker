@@ -38,8 +38,8 @@ EM_KLINE_URL = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
 YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/%s.HK"
 # 腾讯对 runner 整批 501 时熔断；东财港股日K 作主备用，Yahoo 末位。
 TENCENT_GUARD = SourceGuard("腾讯港股K线", max_fail=8)
-EM_GUARD = SourceGuard("东财港股K线", max_fail=8, min_interval=0.35)
-YAHOO_GUARD = SourceGuard("Yahoo港股K线", max_fail=8, min_interval=0.3)
+EM_GUARD = SourceGuard("东财港股K线", max_fail=16, min_interval=0.45, cooldown=30.0)
+YAHOO_GUARD = SourceGuard("Yahoo港股K线", max_fail=20, min_interval=0.35, cooldown=30.0)
 FIN_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 FS = "b:DLMK0146,b:DLMK0144"          # 港股通(沪)+港股通(深) 成分
 UT = "bd1d9ddb04089700cf9c27f6f7426281"
@@ -270,7 +270,21 @@ def _fetch_tencent_segments(sym, beg, end, qfq):
 EM_KLINE_HOSTS = (
     "https://push2his.eastmoney.com/api/qt/stock/kline/get",
     "https://89.push2his.eastmoney.com/api/qt/stock/kline/get",
+    "https://74.push2his.eastmoney.com/api/qt/stock/kline/get",
 )
+
+
+
+def _hard_source_error(exc):
+    """网络/限流等硬错误才计入熔断；空数据/个股无效是软失败，不拖垮整源。"""
+    from pipeline.net import FetchError
+    if isinstance(exc, FetchError):
+        return True
+    msg = str(exc)
+    keys = ("HTTPError", "501", "502", "503", "504", "429", "514",
+            "请求失败", "RemoteDisconnected", "timed out", "Timeout",
+            "Connection", "URLError")
+    return any(k in msg for k in keys)
 
 
 def fetch_hk_kline_em(code, beg=KLINE_START, qfq=True):
@@ -356,7 +370,10 @@ def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
 
 
 def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
-    """港股日K -> bars [{d,o,c,h,l,v}]：腾讯 → 东财 → Yahoo。"""
+    """港股日K -> bars [{d,o,c,h,l,v}]：腾讯 → 东财 → Yahoo。
+
+    备用源熔断时排队等试探，避免 600+ 只瞬间全跳过；空数据等软失败不计入熔断。
+    """
     errors = []
     if TENCENT_GUARD.blocked():
         errors.append("腾讯港股K线已熔断")
@@ -368,6 +385,7 @@ def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
         except Exception as exc:  # noqa: BLE001
             TENCENT_GUARD.fail(exc)
             errors.append("腾讯：%s" % str(exc)[:160])
+    # 东财：熔断则立刻改 Yahoo，不等待（runner 上港股东财常整批不可用）。
     if EM_GUARD.blocked():
         errors.append("东财港股K线已熔断")
     else:
@@ -376,15 +394,17 @@ def fetch_hk_kline(code, beg=KLINE_START, end=None, qfq=True):
             EM_GUARD.ok()
             return bars
         except Exception as exc:  # noqa: BLE001
-            EM_GUARD.fail(exc)
+            if _hard_source_error(exc):
+                EM_GUARD.fail(exc)
             errors.append("东财：%s" % str(exc)[:160])
-    if YAHOO_GUARD.blocked():
+    if not YAHOO_GUARD.await_turn():
         errors.append("Yahoo港股K线已熔断")
         raise RuntimeError("；".join(errors))
     try:
         bars = fetch_hk_kline_yahoo(code, beg, qfq)
     except Exception as exc:  # noqa: BLE001
-        YAHOO_GUARD.fail(exc)
+        if _hard_source_error(exc):
+            YAHOO_GUARD.fail(exc)
         errors.append("Yahoo：%s" % str(exc)[:160])
         raise RuntimeError("；".join(errors)) from exc
     YAHOO_GUARD.ok()

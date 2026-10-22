@@ -251,6 +251,26 @@ class HkTests(unittest.TestCase):
         self.assertEqual(hk.EM_GUARD.fail_count, 1)
         self.assertEqual(hk.YAHOO_GUARD.ok_count, 1)
 
+    def test_soft_empty_does_not_trip_yahoo(self):
+        def fake(url, params=None, **kw):
+            if "gtimg" in url or "push2his" in url or "eastmoney" in url:
+                raise FetchError("<HTTPError 501: 'Not Implemented'>", code=501)
+            return {"chart": {"result": [{"meta": {}, "timestamp": [], "indicators": {"quote": [{}], "adjclose": [{}]}}]}}
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(hk, "BASE", tmp), \
+             mock.patch.object(hk, "fetch_json", fake), mock.patch.object(hk.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                hk.fetch_hk_kline("00700", "20261001", qfq=False)
+        self.assertEqual(hk.YAHOO_GUARD.fail_count, 0)
+        self.assertFalse(hk.YAHOO_GUARD.tripped)
+
+    def test_await_turn_waits_for_probe(self):
+        g = SourceGuard("t", max_fail=1, min_interval=0, cooldown=0.2)
+        g.fail(RuntimeError("x"))
+        self.assertTrue(g.tripped)
+        self.assertTrue(g.blocked())  # within cooldown
+        self.assertTrue(g.await_turn(max_wait=1.0))  # waits then gets probe slot
+
     def _write_snapshot(self, tmp, snap):
         d = Path(tmp) / "data" / "hk"
         d.mkdir(parents=True)
