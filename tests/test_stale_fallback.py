@@ -264,6 +264,14 @@ class HkTests(unittest.TestCase):
         self.assertEqual(hk.YAHOO_GUARD.fail_count, 0)
         self.assertFalse(hk.YAHOO_GUARD.tripped)
 
+    def test_yahoo_drops_single_broken_bar(self):
+        bad = json.loads(json.dumps(YAHOO))
+        q = bad["chart"]["result"][0]["indicators"]["quote"][0]
+        q["high"][0] = 9.0  # h < o/c：脏 bar
+        with mock.patch.object(hk, "fetch_json", return_value=bad):
+            bars = hk.fetch_hk_kline_yahoo("00700", "20261001", qfq=False)
+        self.assertEqual([b["d"] for b in bars], ["2026-10-14"])
+
     def test_await_turn_waits_for_probe(self):
         g = SourceGuard("t", max_fail=1, min_interval=0, cooldown=0.2)
         g.fail(RuntimeError("x"))

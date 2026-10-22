@@ -29,7 +29,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
 from pipeline.net import SourceGuard, fetch, fetch_json  # noqa: E402
-from pipeline.kline import valid_bars, coverage_fields as _coverage_fields, merge_bars as _merge_bars
+from pipeline.kline import valid_bars, usable_bar, coverage_fields as _coverage_fields, merge_bars as _merge_bars
 
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"
 CLIST_FALLBACK_URL = "https://push2.eastmoney.com/api/qt/clist/get"
@@ -327,7 +327,7 @@ def fetch_hk_kline_em(code, beg=KLINE_START, qfq=True):
                          "h": float(p[3]), "l": float(p[4]), "v": float(p[5])})
         except (TypeError, ValueError):
             continue
-    by_date = {b["d"]: b for b in bars}
+    by_date = {b["d"]: b for b in bars if usable_bar(b)}
     bars = [by_date[d] for d in sorted(by_date)]
     if not valid_bars(bars):
         raise RuntimeError("东财港股日K为空或无效")
@@ -362,7 +362,7 @@ def fetch_hk_kline_yahoo(code, beg=KLINE_START, qfq=True):
         d = datetime.datetime.fromtimestamp(ts + offset, datetime.timezone.utc).strftime("%Y-%m-%d")
         bars.append({"d": d, "o": round(o * f, 3), "c": round(c * f, 3),
                      "h": round(h * f, 3), "l": round(l * f, 3), "v": v})
-    by_date = {b["d"]: b for b in bars}
+    by_date = {b["d"]: b for b in bars if usable_bar(b)}  # 个别脏 bar（h<o 等）逐根剔除
     bars = [by_date[d] for d in sorted(by_date)]
     if not valid_bars(bars):
         raise RuntimeError("Yahoo港股日K为空或无效")
