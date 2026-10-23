@@ -182,9 +182,16 @@ YAHOO = {"chart": {"result": [{
     }}]}}
 
 
+EM_PAYLOAD = {"data": {"name": "腾讯控股", "klines": [
+    "2026-10-13,10.000,10.000,10.500,9.500,100",
+    "2026-10-14,11.000,11.000,11.500,10.500,200",
+]}}
+
+
 class HkTests(unittest.TestCase):
     def setUp(self):
         self.patches = [mock.patch.object(hk, "TENCENT_GUARD", SourceGuard("t", max_fail=3)),
+                        mock.patch.object(hk, "EM_GUARD", SourceGuard("e", max_fail=3, min_interval=0)),
                         mock.patch.object(hk, "YAHOO_GUARD", SourceGuard("y", max_fail=3))]
         for p in self.patches:
             p.start()
@@ -207,9 +214,32 @@ class HkTests(unittest.TestCase):
         self.assertAlmostEqual(bars[0]["c"], 9.0)
         self.assertAlmostEqual(bars[0]["h"], 9.45)
 
-    def test_tencent_501_falls_back_to_yahoo(self):
+    def test_em_parse(self):
+        with mock.patch.object(hk, "fetch_json", return_value=EM_PAYLOAD):
+            bars = hk.fetch_hk_kline_em("00700", "20261001", qfq=True)
+        self.assertEqual([b["d"] for b in bars], ["2026-10-13", "2026-10-14"])
+        self.assertAlmostEqual(bars[0]["c"], 10.0)
+        self.assertAlmostEqual(bars[1]["v"], 200)
+
+    def test_tencent_501_falls_back_to_em(self):
         def fake(url, params=None, **kw):
             if "gtimg" in url:
+                raise FetchError("<HTTPError 501: 'Not Implemented'>", code=501)
+            if "push2his" in url or "eastmoney" in url:
+                return EM_PAYLOAD
+            raise AssertionError("unexpected url %s" % url)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(hk, "BASE", tmp), \
+             mock.patch.object(hk, "fetch_json", fake), mock.patch.object(hk.time, "sleep"):
+            bars = hk.fetch_hk_kline("00700", "20261001", qfq=False)
+        self.assertEqual(bars[-1]["d"], "2026-10-14")
+        self.assertEqual(hk.TENCENT_GUARD.fail_count, 1)
+        self.assertEqual(hk.EM_GUARD.ok_count, 1)
+        self.assertEqual(hk.YAHOO_GUARD.ok_count, 0)
+
+    def test_tencent_and_em_fail_falls_back_to_yahoo(self):
+        def fake(url, params=None, **kw):
+            if "gtimg" in url or "push2his" in url or "eastmoney" in url:
                 raise FetchError("<HTTPError 501: 'Not Implemented'>", code=501)
             return YAHOO
 
@@ -218,7 +248,36 @@ class HkTests(unittest.TestCase):
             bars = hk.fetch_hk_kline("00700", "20261001", qfq=False)
         self.assertEqual(bars[-1]["d"], "2026-10-14")
         self.assertEqual(hk.TENCENT_GUARD.fail_count, 1)
+        self.assertEqual(hk.EM_GUARD.fail_count, 1)
         self.assertEqual(hk.YAHOO_GUARD.ok_count, 1)
+
+    def test_soft_empty_does_not_trip_yahoo(self):
+        def fake(url, params=None, **kw):
+            if "gtimg" in url or "push2his" in url or "eastmoney" in url:
+                raise FetchError("<HTTPError 501: 'Not Implemented'>", code=501)
+            return {"chart": {"result": [{"meta": {}, "timestamp": [], "indicators": {"quote": [{}], "adjclose": [{}]}}]}}
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(hk, "BASE", tmp), \
+             mock.patch.object(hk, "fetch_json", fake), mock.patch.object(hk.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                hk.fetch_hk_kline("00700", "20261001", qfq=False)
+        self.assertEqual(hk.YAHOO_GUARD.fail_count, 0)
+        self.assertFalse(hk.YAHOO_GUARD.tripped)
+
+    def test_yahoo_drops_single_broken_bar(self):
+        bad = json.loads(json.dumps(YAHOO))
+        q = bad["chart"]["result"][0]["indicators"]["quote"][0]
+        q["high"][0] = 9.0  # h < o/c：脏 bar
+        with mock.patch.object(hk, "fetch_json", return_value=bad):
+            bars = hk.fetch_hk_kline_yahoo("00700", "20261001", qfq=False)
+        self.assertEqual([b["d"] for b in bars], ["2026-10-14"])
+
+    def test_await_turn_waits_for_probe(self):
+        g = SourceGuard("t", max_fail=1, min_interval=0, cooldown=0.2)
+        g.fail(RuntimeError("x"))
+        self.assertTrue(g.tripped)
+        self.assertTrue(g.blocked())  # within cooldown
+        self.assertTrue(g.await_turn(max_wait=1.0))  # waits then gets probe slot
 
     def _write_snapshot(self, tmp, snap):
         d = Path(tmp) / "data" / "hk"
