@@ -60,17 +60,37 @@ def fetch_sina_yearly_close(code):
 
 
 def latest_trade_date():
-    """估值数据中心里最新的交易日。"""
-    j = fetch_json(DC_URL, params={
+    """估值数据中心里最新的交易日。
+
+    东财 datacenter 偶发 504 时会抛异常；本函数吞掉异常并依次试
+    datacenter / datacenter-web，都失败则返回 None（由调用方兜底）。
+    """
+    params = {
         "reportName": "RPT_VALUEANALYSIS_DET",
         "columns": "TRADE_DATE",
         "pageSize": "1", "pageNumber": "1",
         "sortColumns": "TRADE_DATE", "sortTypes": "-1",
-        "source": "WEB", "client": "WEB"},
-        referer="https://data.eastmoney.com/", retries=4, delay=1.0)
-    data = (j.get("result") or {}).get("data") or []
-    if data:
-        return str(data[0].get("TRADE_DATE"))[:10]
+        "source": "WEB", "client": "WEB",
+    }
+    errors = []
+    for url, label in ((DC_URL, "datacenter"), (DC_WEB_URL, "datacenter-web")):
+        try:
+            j = fetch_json(url, params=params,
+                           referer="https://data.eastmoney.com/",
+                           retries=3, delay=1.0)
+            data = (j.get("result") or {}).get("data") or []
+            if data:
+                day = str(data[0].get("TRADE_DATE") or "")[:10]
+                if day:
+                    if errors:
+                        print("   估值交易日改由 %s 取得：%s" % (label, day),
+                              flush=True)
+                    return day
+            errors.append("%s: 空结果" % label)
+        except Exception as exc:  # noqa: BLE001
+            errors.append("%s: %s" % (label, str(exc)[:160]))
+    if errors:
+        print("   估值交易日接口失败：%s" % " | ".join(errors), flush=True)
     return None
 
 

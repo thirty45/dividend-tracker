@@ -538,11 +538,6 @@ def _all_kline_coverage(codes, kline_dir, raw_dir, target_date):
     return bool(codes)
 
 
-def _pair_bars_valid(qbars, rbars, target_date):
-    """Validate each price series independently, including dates and OHLCV."""
-    return valid_bars(qbars, target_date) and valid_bars(rbars, target_date)
-
-
 def refresh_kline_series(code, old, target_date, cfg, raw=False, force=False):
     """Return a candidate without modifying files; failure retains that mode's cache."""
     old = old if isinstance(old, dict) and valid_bars(old.get("bars")) else {}
@@ -634,10 +629,6 @@ def main():
     codes = [s["code"] for s in stocks]
     name_map = {s["code"]: s["name"] for s in stocks}
 
-    trade_date = sm.latest_trade_date()
-    if not trade_date:
-        print("无法获取最新交易日，退出")
-        return 1
     # K线最新日期探针：估值数据中心可能晚于K线发布，K线可能已更新到当天
     probe_date = None
     if codes:
@@ -649,6 +640,20 @@ def main():
     if os.path.exists(latest_file):
         with open(latest_file, encoding="utf-8") as f:
             stored = json.load(f)
+
+    trade_date = sm.latest_trade_date()
+    if not trade_date:
+        # datacenter 504 等故障时：优先沿用昨日快照日期，再退到K线探针日
+        fallback = (stored.get("date") or "")[:10] or (probe_date or "")
+        if fallback:
+            trade_date = fallback
+            print("估值交易日接口不可用，改用兜底日期 %s（来源：%s）"
+                  % (trade_date,
+                     "latest.json" if (stored.get("date") or "")[:10] == trade_date
+                     else "K线探针"))
+        else:
+            print("无法获取最新交易日，退出")
+            return 1
     kline_stale = bool(probe_date) and probe_date != (stored.get("kline_date") or "")
     snapshot_stale = trade_date != (stored.get("date") or "")
     kline_target = probe_date or trade_date
