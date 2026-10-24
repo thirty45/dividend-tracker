@@ -19,3 +19,9 @@ data/fund_nav/
 _wb_cache_kline/
 
 data/hk/kline_segments/
+
+# 回测本地缓存（指数/代理），不入库
+data/backtest/cache/
+
+# 回测完整调仓明细较大，本地生成即可
+data/backtest/*/rebalances.json
