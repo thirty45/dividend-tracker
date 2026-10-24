@@ -231,11 +231,14 @@ def _fund_nav_proxy(fund_code: str, beg: str, end: str) -> List[dict]:
 
 
 def load_or_fetch_benchmark(code: str, beg: str, end: str,
-                            cache_dir: Optional[str] = None) -> Tuple[List[dict], str]:
-    """返回 (bars, source_note)。
+                            cache_dir: Optional[str] = None
+                            ) -> Tuple[List[dict], dict]:
+    """返回 (bars, meta)。
 
-    000922: 腾讯 sh000922 / 东财 1.000922
-    H30269: 东财 2.H30269；失败则用跟踪基金 005561 累计净值代理
+    meta 含 source / benchmark_type / role / notes。
+    中证红利全收益官方代码 H00922；本环境东财/腾讯/新浪均不可用时
+    主基准退回 000922 价格指数，并标记 excess_public=false。
+    H30269 真源优先；005561 仅 proxy。
     """
     cache_dir = cache_dir or os.path.join(BASE, "data", "backtest", "cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -243,26 +246,93 @@ def load_or_fetch_benchmark(code: str, beg: str, end: str,
     if os.path.isfile(cache_path):
         with open(cache_path, encoding="utf-8") as f:
             payload = json.load(f)
-        return payload.get("bars") or [], payload.get("source") or "cache"
+        # 旧缓存可能缺类型字段，按代码补默认
+        code_u = code.upper()
+        default_type = {
+            "H00922": "total_return", "H20269": "total_return",
+            "000922": "price_index", "H30269": "price_index",
+        }.get(code_u, "price_index")
+        src = payload.get("source") or "cache"
+        btype = payload.get("benchmark_type") or default_type
+        if isinstance(src, str) and src.startswith("proxy:"):
+            btype = "fund_nav_proxy"
+        meta = {
+            "source": src,
+            "benchmark_type": btype,
+            "role": payload.get("role"),
+            "notes": payload.get("notes") or [],
+            "excess_public": payload.get("excess_public", False),
+        }
+        return payload.get("bars") or [], meta
 
     bars: List[dict] = []
     source = ""
-    if code == "000922":
+    benchmark_type = "price_index"
+    role = "secondary"
+    notes: List[str] = []
+    excess_public = False
+
+    code_u = code.upper()
+    if code_u == "H00922":
+        # 中证红利全收益 —— 官方 TR
+        for secid in ("2.H00922", "1.H00922"):
+            em = _eastmoney_index_bars(secid, beg, end)
+            if len(em) > len(bars):
+                bars, source = em, "eastmoney:%s" % secid
+        if len(bars) < 100:
+            notes.append(
+                "H00922(中证红利全收益) 东财/腾讯/新浪在本环境不可用；"
+                "已确认 csindex 基本信息存在（CSI Dividend TRI）")
+            source = source or "unavailable:H00922"
+        else:
+            benchmark_type = "total_return"
+            role = "primary_tr"
+            excess_public = True
+    elif code == "000922":
         bars = _tencent_index_bars("sh000922", beg, end)
         source = "tencent:sh000922"
         if len(bars) < 100:
             em = _eastmoney_index_bars("1.000922", beg, end)
             if len(em) > len(bars):
                 bars, source = em, "eastmoney:1.000922"
-    elif code.upper() == "H30269":
+        benchmark_type = "price_index"
+        role = "primary_price"
+        excess_public = False
+        notes.append(
+            "000922 为价格指数（不含分红再投资）；"
+            "全收益官方代码 H00922 暂无行情源时不得把相对其超额对外展示")
+    elif code_u == "H30269":
         bars = _eastmoney_index_bars("2.H30269", beg, end)
         source = "eastmoney:2.H30269"
+        benchmark_type = "price_index"
+        role = "optional"
         if len(bars) < 100:
+            # 真源失败 → 代理，必须标注
             proxy = _fund_nav_proxy("005561", beg, end)
             if len(proxy) > len(bars):
-                bars, source = proxy, "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)"
+                bars = proxy
+                source = "proxy:fund_nav:005561"
+                benchmark_type = "fund_nav_proxy"
+                notes.append(
+                    "H30269 真源不可用；005561 创金合信中证红利低波A 累计净值"
+                    "仅为 proxy，≠ 指数本身；全收益对应 H20269 亦不可用")
+            else:
+                notes.append("H30269 真源与 005561 代理均失败")
+        excess_public = False
+    elif code_u == "H20269":
+        for secid in ("2.H20269", "1.H20269"):
+            em = _eastmoney_index_bars(secid, beg, end)
+            if len(em) > len(bars):
+                bars, source = em, "eastmoney:%s" % secid
+        if len(bars) >= 100:
+            benchmark_type = "total_return"
+            role = "optional_tr"
+            excess_public = True
+        else:
+            source = source or "unavailable:H20269"
+            notes.append("H20269(红利低波全收益) 行情不可用")
+        role = role if bars else "optional_tr"
     else:
-        # 默认尝试腾讯 sh + 东财 1.
         bars = _tencent_index_bars("sh" + code, beg, end)
         source = "tencent:sh" + code
         if len(bars) < 50:
@@ -270,7 +340,70 @@ def load_or_fetch_benchmark(code: str, beg: str, end: str,
             if len(em) > len(bars):
                 bars, source = em, "eastmoney:1." + code
 
+    meta = {
+        "source": source,
+        "benchmark_type": benchmark_type,
+        "role": role,
+        "notes": notes,
+        "excess_public": excess_public,
+    }
     with open(cache_path, "w", encoding="utf-8") as f:
-        json.dump({"code": code, "beg": beg, "end": end,
-                   "source": source, "bars": bars}, f, ensure_ascii=False)
-    return bars, source
+        json.dump({"code": code, "beg": beg, "end": end, "bars": bars, **meta},
+                  f, ensure_ascii=False)
+    return bars, meta
+
+
+def try_fill_missing_klines(codes: Sequence[str], kline_dir: Optional[str] = None,
+                            progress=None, workers: int = 6
+                            ) -> Tuple[List[str], List[str], str]:
+    """尝试从东财不复权日 K 补 Pages 缺失的代码。
+
+    返回 (filled, still_missing, note)。窗口从 2010 起（够 MA60+回测）。
+    """
+    from pipeline import sources_market as sm
+
+    kline_dir = kline_dir or os.path.join(BASE, "data", "kline_raw")
+    os.makedirs(kline_dir, exist_ok=True)
+    todo = []
+    for code in codes:
+        path = os.path.join(kline_dir, "%s.json" % code)
+        if os.path.isfile(path) and os.path.getsize(path) > 50:
+            continue
+        todo.append(code)
+    note = "Pages 404 后尝试 eastmoney fetch_kline_raw(fqt=0,beg=20100101)"
+    filled, still = [], []
+
+    def _one(code: str):
+        path = os.path.join(kline_dir, "%s.json" % code)
+        try:
+            bars = sm.fetch_kline_raw(code, beg="20100101", end="20500101")
+        except Exception:  # noqa: BLE001
+            return code, False
+        if not bars or len(bars) < 60:
+            return code, False
+        payload = {
+            "code": code, "name": code, "bars": list(bars),
+            "source": "eastmoney_raw_fill",
+            "history_complete": False,
+        }
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, path)
+        return code, True
+
+    if not todo:
+        return [], [], note
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_one, c): c for c in todo}
+        done = 0
+        for fut in as_completed(futs):
+            code, ok = fut.result()
+            done += 1
+            if ok:
+                filled.append(code)
+            else:
+                still.append(code)
+            if progress and (done % 10 == 0 or done == len(todo)):
+                progress("补K %d/%d filled=%d" % (done, len(todo), len(filled)))
+    return filled, still, note

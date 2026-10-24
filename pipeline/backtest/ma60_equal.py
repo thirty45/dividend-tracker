@@ -153,6 +153,8 @@ class BacktestResult:
         self.turnover: List[float] = []  # 当日单边成交额 / 昨收盘净值
         self.rebalances: List[dict] = []
         self.daily: List[dict] = []
+        self.ledger: List[dict] = []  # 独立守恒复算用
+        self.fill_counts = {"open": 0, "close": 0, "ffill": 0, "missing": 0}
         self.meta: dict = {}
 
 
@@ -225,9 +227,17 @@ def run_backtest(
     }
 
     prev_nav = initial_cash
+    prev_cash = initial_cash
+    prev_holdings: Dict[str, float] = {}
+    prev_closes: Dict[str, float] = {}
 
     for di, date in enumerate(calendar):
-        # 1) 除息/送转（开盘前）
+        day_fees = 0.0
+        day_trades: List[dict] = []
+        day_turnover_notional = 0.0
+        fill_tags: Dict[str, str] = {}
+
+        # 1) 除息/送转（开盘前）——在昨收持仓上执行
         cash_div_total = 0.0
         for code, shares in list(holdings.items()):
             if shares <= 0:
@@ -241,10 +251,9 @@ def run_backtest(
                     holdings[code] = shares * ratio
                     shares = holdings[code]
         cash += cash_div_total
+        holdings_after_corp = {c: s for c, s in holdings.items() if s > 1e-12}
 
         # 2) 调仓（开盘）
-        day_turnover_notional = 0.0
-        fill_tags = {}
         if date in rebalance_on:
             signal_day = rebalance_on[date]
             selected = []  # (code, px, tag, stats)
@@ -254,14 +263,15 @@ def run_backtest(
                 if not (st and st["selected"]):
                     continue
                 px, tag = price_on(indexed[code], date, "o", ffill[code])
+                res.fill_counts[tag] = res.fill_counts.get(tag, 0) + 1
                 if px is not None and px > 0:
                     selected.append((code, px, tag, st))
 
             pre_value = cash
             for code, shares in holdings.items():
-                px, _ = price_on(indexed[code], date, "o", ffill[code])
+                px, tag = price_on(indexed[code], date, "o", ffill[code])
                 if px is None:
-                    px, _ = price_on(indexed[code], date, "c", ffill[code])
+                    px, tag = price_on(indexed[code], date, "c", ffill[code])
                 if px is not None:
                     pre_value += shares * px
 
@@ -296,12 +306,19 @@ def run_backtest(
                     px, tag = price_on(indexed[code], date, "o", ffill[code])
                     if px is None:
                         px, tag = price_on(indexed[code], date, "c", ffill[code])
+                    if tag:
+                        res.fill_counts[tag] = res.fill_counts.get(tag, 0) + 1
                 if px is None:
                     continue  # 停牌无法卖，保留
                 notional = sell_shares * px
                 fee = notional * cost_one_way
                 cash += notional - fee
+                day_fees += fee
                 day_turnover_notional += notional
+                day_trades.append({
+                    "code": code, "delta_shares": -sell_shares,
+                    "px": px, "fee": fee, "fill": tag,
+                })
                 left = cur - sell_shares
                 if left <= 1e-10:
                     holdings.pop(code, None)
@@ -309,7 +326,7 @@ def run_backtest(
                     holdings[code] = left
                 fill_tags[code] = tag
 
-            # 买入 / 加仓（现金不够则等比缩放）
+            # 买入 / 加仓
             buy_list = []
             for code, tgt in target_shares_map.items():
                 cur = holdings.get(code) or 0.0
@@ -330,13 +347,17 @@ def run_backtest(
                 notional = d2 * px
                 fee = notional * cost_one_way
                 cash -= notional + fee
+                day_fees += fee
                 holdings[code] = (holdings.get(code) or 0.0) + d2
                 day_turnover_notional += notional
+                day_trades.append({
+                    "code": code, "delta_shares": d2,
+                    "px": px, "fee": fee, "fill": tag,
+                })
                 fill_tags[code] = tag
 
             holdings = {c: s for c, s in holdings.items() if s > 1e-10}
 
-            # 调仓后权重（相对调仓前净值；含费后实际略偏）
             weights = {}
             prices_out = {}
             for code, shares in holdings.items():
@@ -356,24 +377,46 @@ def run_backtest(
                 "fill": {c: fill_tags.get(c) for c in holdings},
                 "nav_before": pre_value,
                 "turnover_notional": day_turnover_notional,
+                "fees": day_fees,
+                "trades": day_trades,
             })
 
         # 3) 收盘估值
         mkt = 0.0
         n_hold = 0
+        close_px: Dict[str, float] = {}
         for code, shares in holdings.items():
-            px, _ = price_on(indexed[code], date, "c", ffill[code])
+            px, tag = price_on(indexed[code], date, "c", ffill[code])
+            if tag == "ffill":
+                res.fill_counts["ffill"] = res.fill_counts.get("ffill", 0) + 1
             if px is None:
                 continue
+            close_px[code] = px
             mkt += shares * px
             n_hold += 1
         nav = cash + mkt
-        # 日收益守恒检查用
         if prev_nav > 0:
             day_ret = nav / prev_nav - 1.0
         else:
             day_ret = 0.0
         turn_ratio = (day_turnover_notional / prev_nav) if prev_nav > 0 else 0.0
+
+        ledger_day = {
+            "date": date,
+            "nav": nav,
+            "nav_prev": prev_nav,
+            "cash": cash,
+            "cash_prev": prev_cash,
+            "cash_div": cash_div_total,
+            "fees": day_fees,
+            "trades": day_trades,
+            "holdings_after_corp": dict(holdings_after_corp),
+            "holdings_eod": dict(holdings),
+            "close_px": dict(close_px),
+            "prev_closes": dict(prev_closes),
+            "rebalance": date in rebalance_on,
+        }
+        res.ledger.append(ledger_day)
 
         res.dates.append(date)
         res.equity.append(nav / initial_cash)
@@ -390,10 +433,18 @@ def run_backtest(
             "day_ret": day_ret,
             "turnover": turn_ratio,
             "rebalance": date in rebalance_on,
+            "cash_div": cash_div_total,
+            "fees": day_fees,
         })
         prev_nav = nav
+        prev_cash = cash
+        prev_holdings = dict(holdings)
+        prev_closes = dict(close_px)
 
+    res.meta["fill_stats"] = dict(res.fill_counts)
     return res
+
+
 
 
 def benchmark_equity(bars: Sequence[dict], dates: Sequence[str]) -> List[float]:

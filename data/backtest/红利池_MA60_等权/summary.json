@@ -1,5 +1,22 @@
 {
   "strategy": "红利池_MA60_等权",
+  "display_policy": {
+    "deployable": false,
+    "absolute_ann_return": "forbidden_for_public",
+    "excess_vs_000922": "forbidden_for_public",
+    "allowed": [
+      "max_drawdown",
+      "avg_holdings",
+      "rebalance_count",
+      "fill_stats",
+      "bias_list",
+      "yearly_attribution_internal",
+      "start_sensitivity_with_excess_internal"
+    ],
+    "reason": "幸存者偏差未修 + 主基准仍为价格指数(000922)，全收益官方码 H00922 行情不可用；禁止对外展示绝对年化与相对价指超额"
+  },
+  "deployable": false,
+  "pool_sensitivity": "untested",
   "meta": {
     "strategy": "红利池_MA60_等权",
     "beg": "2018-01-01",
@@ -11,32 +28,127 @@
     "selection": "watchlist ∩ month_end_close >= MA60(bfq)",
     "survivorship": "current_watchlist_applied_historically",
     "initial_cash": 1000000.0,
-    "universe_size": 711,
+    "fill_stats": {
+      "open": 29534,
+      "close": 0,
+      "ffill": 932,
+      "missing": 24
+    },
+    "universe_size": 817,
+    "watchlist_size": 817,
     "watchlist_limit": null,
-    "missing_kline": 106,
-    "note_survivorship": "使用当前 watchlist 回测历史，存在幸存者偏差"
+    "missing_kline": 0,
+    "missing_kline_codes": [],
+    "missing_kline_filled": [
+      "300017",
+      "300033",
+      "300035",
+      "300037",
+      "300073",
+      "300130",
+      "300142",
+      "300144",
+      "300146",
+      "300171",
+      "300181",
+      "300193",
+      "300251",
+      "300274",
+      "300284",
+      "300316",
+      "300347",
+      "300357",
+      "300373",
+      "300384",
+      "300394",
+      "300406",
+      "300413",
+      "300416",
+      "300433",
+      "300443",
+      "300450",
+      "300470",
+      "300498",
+      "300529",
+      "300562",
+      "300573",
+      "300592",
+      "300595",
+      "300601",
+      "300627",
+      "300628",
+      "300633",
+      "300638",
+      "300674",
+      "300682",
+      "300685",
+      "300693",
+      "300699",
+      "300705",
+      "300724",
+      "300741",
+      "300748",
+      "300750",
+      "300751",
+      "300760",
+      "300770",
+      "300771",
+      "300773",
+      "300783",
+      "300828",
+      "300832",
+      "300833",
+      "300841",
+      "300910",
+      "688076",
+      "688122",
+      "688678"
+    ],
+    "missing_kline_note": "Pages 404 后尝试 eastmoney fetch_kline_raw(fqt=0)",
+    "kline_coverage": 1.0,
+    "pool_sensitivity": "untested",
+    "note_survivorship": "使用当前 watchlist 回测历史，存在幸存者偏差",
+    "note_no_history_constituents": "无历史成分数据，不做池敏感性对照；deployable=false"
   },
   "cost": {
     "one_way": 0.0003,
     "slippage": 0.0,
     "note": "单边万三，滑点 0"
   },
+  "benchmark_primary": {
+    "code": "000922",
+    "benchmark_type": "price_index",
+    "excess_public": false,
+    "source": "tencent:sh000922",
+    "notes": [],
+    "total_return_code": "H00922",
+    "total_return_available": false,
+    "total_return_meta": {
+      "source": "unavailable:H00922",
+      "benchmark_type": "price_index",
+      "role": "secondary",
+      "notes": [
+        "H00922(中证红利全收益) 东财/腾讯/新浪在本环境不可用；已确认 csindex 基本信息存在（CSI Dividend TRI）"
+      ],
+      "excess_public": false
+    }
+  },
   "summary": {
     "start": "2018-01-02",
     "end": "2026-10-23",
     "days": 2134,
-    "final_nav": 1.594021170883243,
-    "total_return": 0.5647852512713596,
-    "ann_return": 0.054296563114710095,
-    "max_drawdown": 0.37781541795177487,
-    "avg_daily_turnover": 0.01528594809289715,
-    "ann_turnover": 3.852058919410082,
-    "avg_holdings": 238.8824355971897,
+    "final_nav": 1.5945650853801174,
+    "total_return": 0.5657991981834196,
+    "ann_return": 0.054377213292871485,
+    "max_drawdown": 0.3801607705650487,
+    "avg_daily_turnover": 0.015390210799461637,
+    "ann_turnover": 3.8783331214643324,
+    "avg_holdings": 254.88430913348947,
     "bench_total_return": 0.11636283932441138,
     "bench_ann_return": 0.013083507653641968,
     "bench_max_drawdown": 0.2965537571118376,
-    "excess_total": 0.4484224119469482,
-    "excess_ann": 0.04121305546106813
+    "excess_total": 0.44943635885900823,
+    "excess_ann": 0.04129370563922952
   },
   "start_sensitivity": {
     "全期": {
@@ -44,46 +156,265 @@
       "ok": true,
       "end": "2026-10-23",
       "days": 2134,
-      "total_return": 0.5647852512713596,
-      "ann_return": 0.054296563114710095,
-      "max_drawdown": 0.37781541795177476,
-      "final_nav": 1.5647852512713596
+      "total_return": 0.5657991981834196,
+      "ann_return": 0.054377213292871485,
+      "max_drawdown": 0.3801607705650487,
+      "final_nav": 1.5657991981834196,
+      "bench_key": "000922",
+      "bench_ann_return": 0.013083507653641968,
+      "excess_ann": 0.04129370563922952,
+      "bench_total_return": 0.11636283932441138,
+      "excess_total": 0.44943635885900823
     },
     "次年起": {
-      "start": "2019-01-01",
+      "start": "2019-01-02",
       "ok": true,
       "end": "2026-10-23",
       "days": 1891,
-      "total_return": 1.3885702838530967,
-      "ann_return": 0.1230309906796565,
-      "max_drawdown": 0.28034003378459793,
-      "final_nav": 2.3885702838530967
+      "total_return": 1.4002839415380421,
+      "ann_return": 0.12376336667000509,
+      "max_drawdown": 0.2840828757979468,
+      "final_nav": 2.400283941538042,
+      "bench_key": "000922",
+      "bench_ann_return": 0.04867643437059077,
+      "excess_ann": 0.07508693229941432,
+      "bench_total_return": 0.42854270027121766,
+      "excess_total": 0.9717412412668245
     },
     "次两年": {
-      "start": "2020-01-01",
+      "start": "2020-01-02",
       "ok": true,
       "end": "2026-10-23",
       "days": 1647,
-      "total_return": 0.6651386396795498,
-      "ann_return": 0.08114295110238356,
-      "max_drawdown": 0.28034003378459793,
-      "final_nav": 1.6651386396795498
+      "total_return": 0.6635759997079735,
+      "ann_return": 0.0809876511725014,
+      "max_drawdown": 0.2840828757979468,
+      "final_nav": 1.6635759997079735,
+      "bench_key": "000922",
+      "bench_ann_return": 0.028146563742207587,
+      "excess_ann": 0.05284108743029381,
+      "bench_total_return": 0.19891452313855584,
+      "excess_total": 0.4646614765694177
     },
     "次三年": {
-      "start": "2021-01-01",
+      "start": "2021-01-04",
       "ok": true,
       "end": "2026-10-23",
       "days": 1404,
-      "total_return": 0.19730202576672617,
-      "ann_return": 0.0328483609152912,
-      "max_drawdown": 0.2803400337845978,
-      "final_nav": 1.1973020257667262
+      "total_return": 0.17110013672995605,
+      "ann_return": 0.028754503201524617,
+      "max_drawdown": 0.2840828757979468,
+      "final_nav": 1.171100136729956,
+      "bench_key": "000922",
+      "bench_ann_return": 0.02870369569499709,
+      "excess_ann": 5.080750652752819e-05,
+      "bench_total_return": 0.1707779351203884,
+      "excess_total": 0.00032220160956764055
     }
   },
+  "start_sensitivity_by_benchmark": {
+    "primary_price_000922": {
+      "全期": {
+        "start": "2018-01-02",
+        "ok": true,
+        "end": "2026-10-23",
+        "days": 2134,
+        "total_return": 0.5657991981834196,
+        "ann_return": 0.054377213292871485,
+        "max_drawdown": 0.3801607705650487,
+        "final_nav": 1.5657991981834196,
+        "bench_key": "000922",
+        "bench_ann_return": 0.013083507653641968,
+        "excess_ann": 0.04129370563922952,
+        "bench_total_return": 0.11636283932441138,
+        "excess_total": 0.44943635885900823
+      },
+      "次年起": {
+        "start": "2019-01-02",
+        "ok": true,
+        "end": "2026-10-23",
+        "days": 1891,
+        "total_return": 1.4002839415380421,
+        "ann_return": 0.12376336667000509,
+        "max_drawdown": 0.2840828757979468,
+        "final_nav": 2.400283941538042,
+        "bench_key": "000922",
+        "bench_ann_return": 0.04867643437059077,
+        "excess_ann": 0.07508693229941432,
+        "bench_total_return": 0.42854270027121766,
+        "excess_total": 0.9717412412668245
+      },
+      "次两年": {
+        "start": "2020-01-02",
+        "ok": true,
+        "end": "2026-10-23",
+        "days": 1647,
+        "total_return": 0.6635759997079735,
+        "ann_return": 0.0809876511725014,
+        "max_drawdown": 0.2840828757979468,
+        "final_nav": 1.6635759997079735,
+        "bench_key": "000922",
+        "bench_ann_return": 0.028146563742207587,
+        "excess_ann": 0.05284108743029381,
+        "bench_total_return": 0.19891452313855584,
+        "excess_total": 0.4646614765694177
+      },
+      "次三年": {
+        "start": "2021-01-04",
+        "ok": true,
+        "end": "2026-10-23",
+        "days": 1404,
+        "total_return": 0.17110013672995605,
+        "ann_return": 0.028754503201524617,
+        "max_drawdown": 0.2840828757979468,
+        "final_nav": 1.171100136729956,
+        "bench_key": "000922",
+        "bench_ann_return": 0.02870369569499709,
+        "excess_ann": 5.080750652752819e-05,
+        "bench_total_return": 0.1707779351203884,
+        "excess_total": 0.00032220160956764055
+      }
+    }
+  },
+  "yearly_attribution": [
+    {
+      "year": "2018",
+      "start": "2018-01-02",
+      "end": "2018-12-28",
+      "strategy": -0.33434607878366973,
+      "bench_key": "000922",
+      "bench": -0.20661568873964042,
+      "excess": -0.1277303900440293
+    },
+    {
+      "year": "2019",
+      "start": "2019-01-02",
+      "end": "2019-12-31",
+      "strategy": 0.42317281303075216,
+      "bench_key": "000922",
+      "bench": 0.17499239267050348,
+      "excess": 0.24818042036024868
+    },
+    {
+      "year": "2020",
+      "start": "2020-01-02",
+      "end": "2020-12-31",
+      "strategy": 0.39006891653484854,
+      "bench_key": "000922",
+      "bench": 0.020541450426262875,
+      "excess": 0.36952746610858567
+    },
+    {
+      "year": "2021",
+      "start": "2021-01-04",
+      "end": "2021-12-31",
+      "strategy": 0.14212288329054723,
+      "bench_key": "000922",
+      "bench": 0.12980909980027344,
+      "excess": 0.012313783490273789
+    },
+    {
+      "year": "2022",
+      "start": "2022-01-04",
+      "end": "2022-12-30",
+      "strategy": -0.14209781025383372,
+      "bench_key": "000922",
+      "bench": -0.06579097095259412,
+      "excess": -0.0763068393012396
+    },
+    {
+      "year": "2023",
+      "start": "2023-01-03",
+      "end": "2023-12-29",
+      "strategy": -0.012633175400627583,
+      "bench_key": "000922",
+      "bench": 0.0023982508300084415,
+      "excess": -0.015031426230636025
+    },
+    {
+      "year": "2024",
+      "start": "2024-01-02",
+      "end": "2024-12-31",
+      "strategy": 0.12447256735793033,
+      "bench_key": "000922",
+      "bench": 0.11163336314153183,
+      "excess": 0.012839204216398503
+    },
+    {
+      "year": "2025",
+      "start": "2025-01-02",
+      "end": "2025-12-31",
+      "strategy": 0.21958779713455745,
+      "bench_key": "000922",
+      "bench": 0.0061771163341675095,
+      "excess": 0.21341068080038994
+    },
+    {
+      "year": "2026",
+      "start": "2026-01-05",
+      "end": "2026-10-23",
+      "strategy": -0.11909092825000323,
+      "bench_key": "000922",
+      "bench": -0.022859232016680275,
+      "excess": -0.09623169623332295
+    }
+  ],
+  "yearly_attribution_tr": null,
+  "fill_stats": {
+    "counts": {
+      "open": 29534,
+      "close": 0,
+      "ffill": 932,
+      "missing": 24
+    },
+    "share": {
+      "open": 0.9686454575270581,
+      "close": 0.0,
+      "ffill": 0.030567399147261396,
+      "missing": 0.000787143325680551
+    }
+  },
+  "bias_list": [
+    "survivorship: current_watchlist_applied_historically",
+    "pool_sensitivity: untested",
+    "primary_benchmark_000922: price_index (not total return)",
+    "H00922 total-return feed unavailable in this environment",
+    "missing_kline codes excluded from universe"
+  ],
   "benchmarks": {
-    "sources": {
-      "000922": "tencent:sh000922",
-      "H30269": "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)"
+    "meta": {
+      "H00922": {
+        "source": "unavailable:H00922",
+        "benchmark_type": "price_index",
+        "role": "secondary",
+        "notes": [
+          "H00922(中证红利全收益) 东财/腾讯/新浪在本环境不可用；已确认 csindex 基本信息存在（CSI Dividend TRI）"
+        ],
+        "excess_public": false
+      },
+      "000922": {
+        "source": "tencent:sh000922",
+        "benchmark_type": "price_index",
+        "role": null,
+        "notes": [],
+        "excess_public": false
+      },
+      "H30269": {
+        "source": "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)",
+        "benchmark_type": "price_index",
+        "role": null,
+        "notes": [],
+        "excess_public": false
+      },
+      "H20269": {
+        "source": "unavailable:H20269",
+        "benchmark_type": "price_index",
+        "role": "optional_tr",
+        "notes": [
+          "H20269(红利低波全收益) 行情不可用"
+        ],
+        "excess_public": false
+      }
     },
     "summaries": {
       "000922": {
@@ -103,16 +434,21 @@
           "start": "2018-01-02",
           "end": "2026-10-23",
           "days": 2134,
-          "final_nav": 1.5647852512713596,
-          "total_return": 0.5647852512713596,
-          "ann_return": 0.054296563114710095,
-          "max_drawdown": 0.37781541795177476,
+          "final_nav": 1.5657991981834196,
+          "total_return": 0.5657991981834196,
+          "ann_return": 0.054377213292871485,
+          "max_drawdown": 0.3801607705650487,
           "avg_daily_turnover": 0.0,
           "ann_turnover": 0.0,
           "avg_holdings": 0.0
         },
-        "strategy_excess_total": 0.4484224119469482,
-        "strategy_excess_ann": 0.04121305546106813
+        "strategy_excess_total": 0.44943635885900823,
+        "strategy_excess_ann": 0.04129370563922952,
+        "source": "tencent:sh000922",
+        "benchmark_type": "price_index",
+        "role": null,
+        "notes": [],
+        "excess_public": false
       },
       "H30269": {
         "start": "2018-04-26",
@@ -131,16 +467,21 @@
           "start": "2018-04-26",
           "end": "2026-10-23",
           "days": 2059,
-          "final_nav": 1.7268343745886532,
-          "total_return": 0.7268343745886532,
-          "ann_return": 0.06914594957354558,
-          "max_drawdown": 0.3325238365563661,
+          "final_nav": 1.7269108675105747,
+          "total_return": 0.7269108675105747,
+          "ann_return": 0.0691517457728863,
+          "max_drawdown": 0.33541180006892934,
           "avg_daily_turnover": 0.0,
           "ann_turnover": 0.0,
           "avg_holdings": 0.0
         },
-        "strategy_excess_total": -0.4438656254113469,
-        "strategy_excess_ann": -0.030356712449017387
+        "strategy_excess_total": -0.4437891324894254,
+        "strategy_excess_ann": -0.030350916249676674,
+        "source": "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)",
+        "benchmark_type": "price_index",
+        "role": null,
+        "notes": [],
+        "excess_public": false
       }
     }
   },
@@ -149,7 +490,7 @@
     {
       "date": "2018-01-02",
       "signal_date": "2017-12-29",
-      "n": 213,
+      "n": 216,
       "selected_head": [
         "000001",
         "000026",
@@ -160,16 +501,16 @@
         "000088",
         "000089"
       ],
-      "selected_truncated": 205,
+      "selected_truncated": 208,
       "weights_head": {
-        "000001": 0.004693427652455437,
-        "000026": 0.004693427652455436,
-        "000028": 0.004693427652455437,
-        "000039": 0.004693427652455437,
-        "000049": 0.004693427652455436,
-        "000063": 0.004693427652455437,
-        "000088": 0.004693427652455437,
-        "000089": 0.004693427652455437
+        "000001": 0.004628241157282444,
+        "000026": 0.004628241157282445,
+        "000028": 0.004628241157282445,
+        "000039": 0.004628241157282445,
+        "000049": 0.004628241157282445,
+        "000063": 0.004628241157282444,
+        "000088": 0.004628241157282445,
+        "000089": 0.004628241157282444
       },
       "prices_head": {
         "000001": 13.35,
@@ -192,12 +533,14 @@
         "000089": "open"
       },
       "nav_before": 1000000.0,
-      "turnover_notional": 999700.0899730053
+      "turnover_notional": 999700.0899730122,
+      "fees": 299.9100269919037,
+      "trades_n": 216
     },
     {
       "date": "2018-02-01",
       "signal_date": "2018-01-31",
-      "n": 228,
+      "n": 231,
       "selected_head": [
         "000001",
         "000028",
@@ -208,16 +551,16 @@
         "000089",
         "000100"
       ],
-      "selected_truncated": 220,
+      "selected_truncated": 223,
       "weights_head": {
-        "000001": 0.0043859649122807015,
-        "000028": 0.0043859649122807015,
-        "000039": 0.004385907246910918,
-        "000049": 0.0043859649122807015,
-        "000063": 0.004385577378794734,
-        "000088": 0.0043859649122807015,
-        "000089": 0.0043859649122807015,
-        "000100": 0.004385843979390156
+        "000001": 0.004329004329004329,
+        "000028": 0.004329004329004329,
+        "000039": 0.004328948012463255,
+        "000049": 0.004329004329004329,
+        "000063": 0.004328622351439333,
+        "000088": 0.004329004329004329,
+        "000089": 0.004329004329004329,
+        "000100": 0.004328885551847691
       },
       "prices_head": {
         "000001": 13.95,
@@ -239,13 +582,15 @@
         "000089": "open",
         "000100": "open"
       },
-      "nav_before": 1032045.044614382,
-      "turnover_notional": 217868.55753016172
+      "nav_before": 1030858.5123384537,
+      "turnover_notional": 224774.67303367547,
+      "fees": 67.43240191010261,
+      "trades_n": 238
     },
     {
       "date": "2026-09-01",
       "signal_date": "2026-08-31",
-      "n": 281,
+      "n": 302,
       "selected_head": [
         "000026",
         "000063",
@@ -256,16 +601,16 @@
         "000408",
         "000425"
       ],
-      "selected_truncated": 273,
+      "selected_truncated": 294,
       "weights_head": {
-        "000026": 0.0035587188612099642,
-        "000063": 0.0035586129674704215,
-        "000100": 0.0035587188612099642,
-        "000333": 0.003558595524241593,
-        "000338": 0.0035585519866985246,
-        "000404": 0.0035584033292354045,
-        "000408": 0.0035585829512637624,
-        "000425": 0.0035583753124438437
+        "000026": 0.0033112582781456954,
+        "000063": 0.003311184759016381,
+        "000100": 0.0033112582781456945,
+        "000333": 0.003311168304825979,
+        "000338": 0.003311127235879954,
+        "000404": 0.0033109870073576493,
+        "000408": 0.003311156444741291,
+        "000425": 0.0033109605791299796
       },
       "prices_head": {
         "000026": 20.55,
@@ -287,13 +632,15 @@
         "000408": "open",
         "000425": "open"
       },
-      "nav_before": 1742553.594544363,
-      "turnover_notional": 430645.8500828463
+      "nav_before": 1750251.9984555922,
+      "turnover_notional": 440494.7148718166,
+      "fees": 132.14841446154475,
+      "trades_n": 333
     },
     {
       "date": "2026-10-08",
       "signal_date": "2026-09-30",
-      "n": 268,
+      "n": 287,
       "selected_head": [
         "000026",
         "000100",
@@ -304,16 +651,16 @@
         "000429",
         "000543"
       ],
-      "selected_truncated": 260,
+      "selected_truncated": 279,
       "weights_head": {
-        "000026": 0.003731120343008128,
-        "000100": 0.00373119611240803,
-        "000333": 0.003731140542088217,
-        "000338": 0.0037311693585638578,
-        "000404": 0.0037312343093032483,
-        "000408": 0.003731101762675984,
-        "000429": 0.0037311853569045638,
-        "000543": 0.003731284666937402
+        "000026": 0.003484104004259045,
+        "000100": 0.003484174485852421,
+        "000333": 0.0034841228077137523,
+        "000338": 0.0034841496130207307,
+        "000404": 0.0034842100302801657,
+        "000408": 0.003484086734285509,
+        "000429": 0.003484164493972643,
+        "000543": 0.0034842568737868244
       },
       "prices_head": {
         "000026": 18.67,
@@ -335,8 +682,10 @@
         "000429": "open",
         "000543": "open"
       },
-      "nav_before": 1678649.217715235,
-      "turnover_notional": 470745.68243939255
+      "nav_before": 1687513.9709013444,
+      "turnover_notional": 502586.9067230524,
+      "fees": 150.7760720169159,
+      "trades_n": 328
     }
   ],
   "artifacts": {
@@ -344,5 +693,7 @@
     "chart_html": "chart.html",
     "rebalances_json": "rebalances.json",
     "note": "完整调仓明细见 rebalances.json（默认不入库）"
-  }
+  },
+  "summary_note": "summary.ann_return / excess_ann 仅供内部；display_policy 禁止对外展示",
+  "missing_kline_codes": []
 }

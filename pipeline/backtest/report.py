@@ -8,7 +8,32 @@ import os
 from typing import Dict, List, Optional, Sequence
 
 from pipeline.backtest import COST_ONE_WAY, STRATEGY_NAME
-from pipeline.backtest.metrics import start_sensitivity, summarize
+from pipeline.backtest.metrics import (
+    annualized_return,
+    excess_return,
+    start_sensitivity,
+    summarize,
+    yearly_attribution,
+)
+
+DISPLAY_POLICY = {
+    "deployable": False,
+    "absolute_ann_return": "forbidden_for_public",
+    "excess_vs_000922": "forbidden_for_public",
+    "allowed": [
+        "max_drawdown",
+        "avg_holdings",
+        "rebalance_count",
+        "fill_stats",
+        "bias_list",
+        "yearly_attribution_internal",
+        "start_sensitivity_with_excess_internal",
+    ],
+    "reason": (
+        "幸存者偏差未修 + 主基准仍为价格指数(000922)，"
+        "全收益官方码 H00922 行情不可用；禁止对外展示绝对年化与相对价指超额"
+    ),
+}
 
 
 def write_equity_csv(path: str, dates: Sequence[str], equity: Sequence[float],
@@ -36,20 +61,22 @@ def write_summary_json(path: str, payload: dict) -> None:
 
 
 def write_chart_html(path: str, dates: Sequence[str], equity: Sequence[float],
-                     benches: Dict[str, Sequence[float]], title: str) -> None:
+                     benches: Dict[str, Sequence[float]], title: str,
+                     display_policy: Optional[dict] = None) -> None:
     """纯 HTML + 内联 SVG 折线（无外网依赖）。"""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    policy = display_policy or DISPLAY_POLICY
     series = [("策略", list(equity))]
     for name, vals in benches.items():
         series.append((name, list(vals)))
 
-    # 归一化画布
     width, height = 960, 420
     pad_l, pad_r, pad_t, pad_b = 56, 24, 36, 40
     usable_w = width - pad_l - pad_r
     usable_h = height - pad_t - pad_b
 
-    all_vals = [v for _, s in series for v in s if isinstance(v, float) and v == v]
+    all_vals = [v for _, s in series for v in s
+                if isinstance(v, (int, float)) and v == v]
     if not all_vals or len(dates) < 2:
         ymin, ymax = 0.8, 1.2
     else:
@@ -65,12 +92,11 @@ def write_chart_html(path: str, dates: Sequence[str], equity: Sequence[float],
         return x, y
 
     colors = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd"]
-    paths = []
-    legends = []
+    paths, legends = [], []
     for si, (name, vals) in enumerate(series):
         pts = []
         for i, v in enumerate(vals):
-            if not isinstance(v, float) or v != v:
+            if not isinstance(v, (int, float)) or v != v:
                 continue
             x, y = xy(i, v)
             pts.append("%.1f,%.1f" % (x, y))
@@ -82,16 +108,22 @@ def write_chart_html(path: str, dates: Sequence[str], equity: Sequence[float],
                 '<span style="color:%s;margin-right:16px">● %s</span>'
                 % (colors[si % len(colors)], name))
 
-    # y ticks
     y_ticks = []
     for k in range(5):
         v = ymin + (ymax - ymin) * k / 4.0
-        x0 = pad_l
         y = pad_t + usable_h * (1.0 - k / 4.0)
         y_ticks.append(
             '<line x1="%d" y1="%.1f" x2="%d" y2="%.1f" stroke="#eee"/>'
             '<text x="%d" y="%.1f" font-size="11" fill="#666" text-anchor="end">%.2f</text>'
             % (pad_l, y, width - pad_r, y, pad_l - 6, y + 4, v))
+
+    warn = (
+        '<div class="warn"><b>display_policy</b>：deployable=%s；'
+        'absolute_ann_return / excess_vs_000922 = <code>%s</code>。'
+        '主基准 000922 为价格指数；全收益 H00922 暂无行情。'
+        '图仅供内部研究，禁止把绝对年化或相对价指超额对外展示。</div>'
+        % (policy.get("deployable"), policy.get("absolute_ann_return"))
+    )
 
     html = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"/>
@@ -99,11 +131,15 @@ def write_chart_html(path: str, dates: Sequence[str], equity: Sequence[float],
 <style>
 body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;margin:24px;color:#222}
 h1{font-size:20px;margin:0 0 8px}
-.meta{color:#666;font-size:13px;margin-bottom:12px}
+.meta{color:#666;font-size:13px;margin-bottom:8px}
+.warn{background:#fff3cd;border:1px solid #ffecb5;padding:10px 12px;font-size:13px;margin:8px 0 16px;line-height:1.5}
 .legend{margin:8px 0 16px;font-size:13px}
+code{background:#f5f5f5;padding:1px 4px}
 </style></head><body>
 <h1>%s</h1>
-<div class="meta">成本：单边万三（%.4f%%），滑点 0；价格口径 bfq；幸存者偏差：当前 watchlist 回测历史</div>
+%s
+<div class="meta">成本：单边万三（%.4f%%），滑点 0；价格口径 bfq；
+幸存者偏差：当前 watchlist 回测历史；pool_sensitivity=untested</div>
 <div class="legend">%s</div>
 <svg width="%d" height="%d" style="border:1px solid #eee;background:#fafafa">
 %s
@@ -113,7 +149,7 @@ h1{font-size:20px;margin:0 0 8px}
 </svg>
 </body></html>
 """ % (
-        title, title, COST_ONE_WAY * 100,
+        title, title, warn, COST_ONE_WAY * 100,
         "".join(legends), width, height,
         "".join(y_ticks), "".join(paths),
         pad_l, height - 12, dates[0] if dates else "",
@@ -124,10 +160,9 @@ h1{font-size:20px;margin:0 0 8px}
 
 
 def build_report_payload(result, bench_series: Dict[str, List[float]],
-                         bench_sources: Dict[str, str],
+                         bench_meta: Dict[str, dict],
                          extra_meta: Optional[dict] = None) -> dict:
     def _filled(series):
-        """把前导 None 之后的序列抽出，并与策略净值同步再定基。"""
         if not series:
             return None, None, None
         start_i = 0
@@ -137,23 +172,29 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
             return None, None, None
         dates = list(result.dates[start_i:])
         eq = [v / result.equity[start_i] for v in result.equity[start_i:]]
-        # series 已相对自身首次非空定基；再切到同一 start_i
         b0 = series[start_i]
         bench = [v / b0 for v in series[start_i:]]
         return dates, eq, bench
 
-    primary = bench_series.get("000922")
-    # 000922 应全覆盖；若有 None 则对齐
+    primary_key = "000922"
+    # 若有可用全收益序列，优先作对比键（仍可能 excess_public=false 若未启用）
+    if "H00922" in bench_series and any(
+            v is not None for v in bench_series["H00922"]):
+        primary_key = "H00922"
+
+    primary = bench_series.get(primary_key) or bench_series.get("000922")
     if primary and any(v is None for v in primary):
         d2, e2, b2 = _filled(primary)
         summary = summarize(
-            d2 or result.dates, e2 or result.equity, result.turnover, result.n_holdings,
+            d2 or result.dates, e2 or result.equity,
+            result.turnover[-len(d2):] if d2 else result.turnover,
+            result.n_holdings[-len(d2):] if d2 else result.n_holdings,
             bench_equity=b2)
     else:
         summary = summarize(
             result.dates, result.equity, result.turnover, result.n_holdings,
             bench_equity=primary)
-    # 起点敏感性：全期 / 次年起 / 次两年 / 次三年
+
     if result.dates:
         y0 = int(result.dates[0][:4])
         starts = [
@@ -164,13 +205,35 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
         ]
     else:
         starts = []
-    sens = start_sensitivity(result.dates, result.equity, starts)
+
+    # 主价指基准敏感性
+    sens_price = start_sensitivity(
+        result.dates, result.equity, starts,
+        bench=bench_series.get("000922"), bench_key="000922")
+    sens = {"primary_price_000922": sens_price}
+    if "H00922" in bench_series:
+        sens["total_return_H00922"] = start_sensitivity(
+            result.dates, result.equity, starts,
+            bench=bench_series.get("H00922"), bench_key="H00922")
+    # 扁平一份给旧读者：用主价指
+    sens_flat = dict(sens_price)
+
+    yearly = yearly_attribution(
+        result.dates, result.equity,
+        bench=bench_series.get("000922"), bench_key="000922")
+    yearly_tr = None
+    if "H00922" in bench_series:
+        yearly_tr = yearly_attribution(
+            result.dates, result.equity,
+            bench=bench_series.get("H00922"), bench_key="H00922")
+
     bench_summaries = {}
-    from pipeline.backtest.metrics import excess_return, annualized_return
     for code, series in bench_series.items():
         d2, e2, b2 = _filled(series)
+        meta = bench_meta.get(code) or {}
         if not d2 or not b2 or not e2:
-            bench_summaries[code] = {"ok": False, "reason": "no_overlap"}
+            bench_summaries[code] = {
+                "ok": False, "reason": "no_overlap", **meta}
             continue
         bs = summarize(d2, b2, [0.0] * len(b2), [0] * len(b2))
         bs["ok"] = True
@@ -180,6 +243,8 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
         bs["strategy_excess_total"] = excess_return(e2, b2)
         bs["strategy_excess_ann"] = (
             bs["strategy_on_overlap"]["ann_return"] - bs["ann_return"])
+        bs.update({k: meta.get(k) for k in (
+            "source", "benchmark_type", "role", "notes", "excess_public")})
         bench_summaries[code] = bs
 
     def _slim_rb(rb, keep=8):
@@ -199,10 +264,11 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
             "fill_head": {c: fill.get(c) for c in head},
             "nav_before": rb.get("nav_before"),
             "turnover_notional": rb.get("turnover_notional"),
+            "fees": rb.get("fees"),
+            "trades_n": len(rb.get("trades") or []),
         }
 
     samples = result.rebalances[:2] + result.rebalances[-2:]
-    # 去重（短回测可能首尾重叠）
     seen, slim = set(), []
     for rb in samples:
         key = rb.get("date")
@@ -211,15 +277,59 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
         seen.add(key)
         slim.append(_slim_rb(rb))
 
+    fills = dict(getattr(result, "fill_counts", {}) or {})
+    fill_total = sum(fills.values()) or 1
+    fill_stats = {
+        "counts": fills,
+        "share": {k: fills.get(k, 0) / fill_total for k in (
+            "open", "close", "ffill", "missing")},
+    }
+
+    primary_meta = bench_meta.get("000922") or {}
+    tr_meta = bench_meta.get("H00922") or {}
+    has_tr = bool(tr_meta.get("benchmark_type") == "total_return"
+                  and bench_series.get("H00922"))
+
+    bias_list = [
+        "survivorship: current_watchlist_applied_historically",
+        "pool_sensitivity: untested",
+        "primary_benchmark_000922: price_index (not total return)",
+        "H00922 total-return feed unavailable in this environment"
+        if not has_tr else "H00922 total-return available",
+        "missing_kline codes excluded from universe",
+    ]
+
     payload = {
         "strategy": STRATEGY_NAME,
+        "display_policy": dict(DISPLAY_POLICY),
+        "deployable": False,
+        "pool_sensitivity": "untested",
         "meta": {**(result.meta or {}), **(extra_meta or {})},
         "cost": {"one_way": COST_ONE_WAY, "slippage": 0.0,
                  "note": "单边万三，滑点 0"},
+        "benchmark_primary": {
+            "code": "000922",
+            "benchmark_type": primary_meta.get("benchmark_type") or "price_index",
+            "excess_public": False,
+            "source": primary_meta.get("source"),
+            "notes": primary_meta.get("notes") or [],
+            "total_return_code": "H00922",
+            "total_return_available": has_tr,
+            "total_return_meta": tr_meta,
+        },
         "summary": summary,
-        "start_sensitivity": sens,
+        "start_sensitivity": sens_flat,
+        "start_sensitivity_by_benchmark": sens,
+        "yearly_attribution": yearly,
+        "yearly_attribution_tr": yearly_tr,
+        "fill_stats": fill_stats,
+        "missing_kline_codes": list(
+            (result.meta or {}).get("missing_kline_codes")
+            or (extra_meta or {}).get("missing_kline_codes")
+            or []),
+        "bias_list": bias_list,
         "benchmarks": {
-            "sources": bench_sources,
+            "meta": bench_meta,
             "summaries": bench_summaries,
         },
         "rebalance_count": len(result.rebalances),
@@ -231,14 +341,19 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
             "note": "完整调仓明细见 rebalances.json（默认不入库）",
         },
     }
+    # 内部数字保留在 summary，但加闸门注释
+    payload["summary_note"] = (
+        "summary.ann_return / excess_ann 仅供内部；"
+        "display_policy 禁止对外展示"
+    )
     return payload
 
 
 def write_all(out_dir: str, result, bench_series: Dict[str, List[float]],
-              bench_sources: Dict[str, str],
+              bench_meta: Dict[str, dict],
               extra_meta: Optional[dict] = None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
-    payload = build_report_payload(result, bench_series, bench_sources, extra_meta)
+    payload = build_report_payload(result, bench_series, bench_meta, extra_meta)
     write_summary_json(os.path.join(out_dir, "summary.json"), payload)
     write_equity_csv(
         os.path.join(out_dir, "equity.csv"),
@@ -247,8 +362,8 @@ def write_all(out_dir: str, result, bench_series: Dict[str, List[float]],
     write_chart_html(
         os.path.join(out_dir, "chart.html"),
         result.dates, result.equity, bench_series,
-        title="%s vs 基准" % STRATEGY_NAME)
-    # 调仓明细（便于验收核验）
+        title="%s vs 基准（研究用，不可部署）" % STRATEGY_NAME,
+        display_policy=payload["display_policy"])
     with open(os.path.join(out_dir, "rebalances.json"), "w", encoding="utf-8") as f:
         json.dump(result.rebalances, f, ensure_ascii=False, indent=2)
     return payload
