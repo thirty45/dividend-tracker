@@ -60,34 +60,70 @@ def fetch_sina_yearly_close(code):
 
 
 def latest_trade_date():
-    """估值数据中心里最新的交易日。"""
-    j = fetch_json(DC_URL, params={
+    """估值数据中心里最新的交易日。
+
+    东财 datacenter 偶发 504 时会抛异常；本函数吞掉异常并依次试
+    datacenter / datacenter-web，都失败则返回 None（由调用方兜底）。
+    """
+    params = {
         "reportName": "RPT_VALUEANALYSIS_DET",
         "columns": "TRADE_DATE",
         "pageSize": "1", "pageNumber": "1",
         "sortColumns": "TRADE_DATE", "sortTypes": "-1",
-        "source": "WEB", "client": "WEB"},
-        referer="https://data.eastmoney.com/", retries=4, delay=1.0)
-    data = (j.get("result") or {}).get("data") or []
-    if data:
-        return str(data[0].get("TRADE_DATE"))[:10]
+        "source": "WEB", "client": "WEB",
+    }
+    errors = []
+    for url, label in ((DC_URL, "datacenter"), (DC_WEB_URL, "datacenter-web")):
+        try:
+            j = fetch_json(url, params=params,
+                           referer="https://data.eastmoney.com/",
+                           retries=3, delay=1.0)
+            data = (j.get("result") or {}).get("data") or []
+            if data:
+                day = str(data[0].get("TRADE_DATE") or "")[:10]
+                if day:
+                    if errors:
+                        print("   估值交易日改由 %s 取得：%s" % (label, day),
+                              flush=True)
+                    return day
+            errors.append("%s: 空结果" % label)
+        except Exception as exc:  # noqa: BLE001
+            errors.append("%s: %s" % (label, str(exc)[:160]))
+    if errors:
+        print("   估值交易日接口失败：%s" % " | ".join(errors), flush=True)
     return None
 
 
 def fetch_valuation(trade_date=None, page_size=500, progress=None):
-    """全市场估值快照（含 PE_TTM、PB_MRQ、总市值、行业板块等）。"""
+    """全市场估值快照（含 PE_TTM、PB_MRQ、总市值、行业板块等）。
+
+    分页请求优先 datacenter，首屏失败时改走 datacenter-web。
+    """
     if not trade_date:
         trade_date = latest_trade_date()
+    params_base = {
+        "reportName": "RPT_VALUEANALYSIS_DET",
+        "columns": "ALL",
+        "filter": "(TRADE_DATE='%s')" % trade_date,
+        "pageSize": str(page_size),
+        "sortColumns": "SECURITY_CODE", "sortTypes": "1",
+        "source": "WEB", "client": "WEB",
+    }
+    host = DC_URL
     rows, page = [], 1
     while True:
-        j = fetch_json(DC_URL, params={
-            "reportName": "RPT_VALUEANALYSIS_DET",
-            "columns": "ALL",
-            "filter": "(TRADE_DATE='%s')" % trade_date,
-            "pageSize": str(page_size), "pageNumber": str(page),
-            "sortColumns": "SECURITY_CODE", "sortTypes": "1",
-            "source": "WEB", "client": "WEB"},
-            referer="https://data.eastmoney.com/", retries=4, delay=1.0)
+        params = dict(params_base, pageNumber=str(page))
+        try:
+            j = fetch_json(host, params=params,
+                           referer="https://data.eastmoney.com/",
+                           retries=3, delay=1.0)
+        except Exception as exc:  # noqa: BLE001
+            if host == DC_URL and page == 1:
+                print("   估值快照改走 datacenter-web：%s" % str(exc)[:120],
+                      flush=True)
+                host = DC_WEB_URL
+                continue
+            raise
         res = j.get("result") or {}
         data = res.get("data") or []
         rows.extend(data)

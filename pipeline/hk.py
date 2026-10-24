@@ -17,7 +17,6 @@
 
 import datetime
 import json
-import math
 import os
 import re
 import sys
@@ -28,7 +27,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 
-from pipeline.net import SourceGuard, fetch, fetch_json  # noqa: E402
+from pipeline.net import SourceGuard, fetch_json  # noqa: E402
 from pipeline.kline import valid_bars, usable_bar, coverage_fields as _coverage_fields, merge_bars as _merge_bars
 
 CLIST_URL = "https://push2delay.eastmoney.com/api/qt/clist/get"

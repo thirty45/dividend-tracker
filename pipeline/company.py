@@ -7,9 +7,6 @@
 
 import datetime
 import json
-import os
-import re
-import urllib.request
 
 from .net import fetch, fetch_json
 

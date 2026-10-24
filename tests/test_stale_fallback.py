@@ -358,6 +358,41 @@ class StatusReportTests(unittest.TestCase):
         self.assertIn("::warning title=A股K线 数据陈旧", text)
 
 
+class TradeDateFallbackTests(unittest.TestCase):
+    """latest_trade_date：主接口失败时试备用主机，全失败返回 None。"""
+
+    def test_primary_ok(self):
+        def fake(url, params=None, **kwargs):
+            self.assertIn("datacenter.eastmoney.com", url)
+            return {"result": {"data": [{"TRADE_DATE": "2026-10-23 00:00:00"}]}}
+
+        with mock.patch("pipeline.sources_market.fetch_json", fake),              redirect_stdout(io.StringIO()):
+            self.assertEqual(sm.latest_trade_date(), "2026-10-23")
+
+    def test_falls_back_to_web_host(self):
+        calls = []
+
+        def fake(url, params=None, **kwargs):
+            calls.append(url)
+            if "datacenter-web" in url:
+                return {"result": {"data": [{"TRADE_DATE": "2026-10-22"}]}}
+            raise FetchError("504", code=504)
+
+        with mock.patch("pipeline.sources_market.fetch_json", fake),              redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(sm.latest_trade_date(), "2026-10-22")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("datacenter-web", out.getvalue())
+
+    def test_all_fail_returns_none(self):
+        def fake(url, params=None, **kwargs):
+            raise FetchError("504", code=504)
+
+        with mock.patch("pipeline.sources_market.fetch_json", fake),              redirect_stdout(io.StringIO()):
+            self.assertIsNone(sm.latest_trade_date())
+
+
+
+
 if __name__ == "__main__":
     unittest.main()
 
