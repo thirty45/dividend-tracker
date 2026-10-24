@@ -290,14 +290,35 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
     has_tr = bool(tr_meta.get("benchmark_type") == "total_return"
                   and bench_series.get("H00922"))
 
+    missing_codes = list(
+        (result.meta or {}).get("missing_kline_codes")
+        or (extra_meta or {}).get("missing_kline_codes")
+        or [])
+    missing_n = int(
+        (result.meta or {}).get("missing_kline")
+        if (result.meta or {}).get("missing_kline") is not None
+        else (extra_meta or {}).get("missing_kline")
+        if (extra_meta or {}).get("missing_kline") is not None
+        else len(missing_codes))
     bias_list = [
         "survivorship: current_watchlist_applied_historically",
         "pool_sensitivity: untested",
         "primary_benchmark_000922: price_index (not total return)",
         "H00922 total-return feed unavailable in this environment"
         if not has_tr else "H00922 total-return available",
-        "missing_kline codes excluded from universe",
     ]
+    if missing_n > 0 or missing_codes:
+        bias_list.append(
+            "missing_kline codes excluded from universe (%d)" % missing_n)
+    else:
+        filled = ((result.meta or {}).get("missing_kline_filled")
+                  or (extra_meta or {}).get("missing_kline_filled") or [])
+        if filled:
+            bias_list.append(
+                "missing_kline filled via eastmoney (%d); coverage complete"
+                % len(filled))
+        else:
+            bias_list.append("missing_kline: 0 (full coverage)")
 
     payload = {
         "strategy": STRATEGY_NAME,
@@ -323,10 +344,7 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
         "yearly_attribution": yearly,
         "yearly_attribution_tr": yearly_tr,
         "fill_stats": fill_stats,
-        "missing_kline_codes": list(
-            (result.meta or {}).get("missing_kline_codes")
-            or (extra_meta or {}).get("missing_kline_codes")
-            or []),
+        "missing_kline_codes": missing_codes,
         "bias_list": bias_list,
         "benchmarks": {
             "meta": bench_meta,

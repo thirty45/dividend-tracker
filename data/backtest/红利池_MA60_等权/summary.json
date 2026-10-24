@@ -39,72 +39,8 @@
     "watchlist_limit": null,
     "missing_kline": 0,
     "missing_kline_codes": [],
-    "missing_kline_filled": [
-      "300017",
-      "300033",
-      "300035",
-      "300037",
-      "300073",
-      "300130",
-      "300142",
-      "300144",
-      "300146",
-      "300171",
-      "300181",
-      "300193",
-      "300251",
-      "300274",
-      "300284",
-      "300316",
-      "300347",
-      "300357",
-      "300373",
-      "300384",
-      "300394",
-      "300406",
-      "300413",
-      "300416",
-      "300433",
-      "300443",
-      "300450",
-      "300470",
-      "300498",
-      "300529",
-      "300562",
-      "300573",
-      "300592",
-      "300595",
-      "300601",
-      "300627",
-      "300628",
-      "300633",
-      "300638",
-      "300674",
-      "300682",
-      "300685",
-      "300693",
-      "300699",
-      "300705",
-      "300724",
-      "300741",
-      "300748",
-      "300750",
-      "300751",
-      "300760",
-      "300770",
-      "300771",
-      "300773",
-      "300783",
-      "300828",
-      "300832",
-      "300833",
-      "300841",
-      "300910",
-      "688076",
-      "688122",
-      "688678"
-    ],
-    "missing_kline_note": "Pages 404 后尝试 eastmoney fetch_kline_raw(fqt=0)",
+    "missing_kline_filled": [],
+    "missing_kline_note": "Pages 404；未启用补源",
     "kline_coverage": 1.0,
     "pool_sensitivity": "untested",
     "note_survivorship": "使用当前 watchlist 回测历史，存在幸存者偏差",
@@ -374,12 +310,13 @@
       "missing": 0.000787143325680551
     }
   },
+  "missing_kline_codes": [],
   "bias_list": [
     "survivorship: current_watchlist_applied_historically",
     "pool_sensitivity: untested",
     "primary_benchmark_000922: price_index (not total return)",
     "H00922 total-return feed unavailable in this environment",
-    "missing_kline codes excluded from universe"
+    "missing_kline: 0 (full coverage)"
   ],
   "benchmarks": {
     "meta": {
@@ -400,10 +337,12 @@
         "excess_public": false
       },
       "H30269": {
-        "source": "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)",
-        "benchmark_type": "price_index",
-        "role": null,
-        "notes": [],
+        "source": "proxy:fund_nav:005561",
+        "benchmark_type": "fund_nav_proxy",
+        "role": "optional",
+        "notes": [
+          "H30269 真源不可用；005561 创金合信中证红利低波A 累计净值仅为 proxy，≠ 指数本身；全收益对应 H20269 亦不可用"
+        ],
         "excess_public": false
       },
       "H20269": {
@@ -477,10 +416,12 @@
         },
         "strategy_excess_total": -0.4437891324894254,
         "strategy_excess_ann": -0.030350916249676674,
-        "source": "fund_nav_proxy:005561(创金合信中证红利低波A累计净值)",
-        "benchmark_type": "price_index",
-        "role": null,
-        "notes": [],
+        "source": "proxy:fund_nav:005561",
+        "benchmark_type": "fund_nav_proxy",
+        "role": "optional",
+        "notes": [
+          "H30269 真源不可用；005561 创金合信中证红利低波A 累计净值仅为 proxy，≠ 指数本身；全收益对应 H20269 亦不可用"
+        ],
         "excess_public": false
       }
     }
@@ -694,6 +635,5 @@
     "rebalances_json": "rebalances.json",
     "note": "完整调仓明细见 rebalances.json（默认不入库）"
   },
-  "summary_note": "summary.ann_return / excess_ann 仅供内部；display_policy 禁止对外展示",
-  "missing_kline_codes": []
+  "summary_note": "summary.ann_return / excess_ann 仅供内部；display_policy 禁止对外展示"
 }

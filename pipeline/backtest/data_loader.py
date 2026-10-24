@@ -254,7 +254,14 @@ def load_or_fetch_benchmark(code: str, beg: str, end: str,
         }.get(code_u, "price_index")
         src = payload.get("source") or "cache"
         btype = payload.get("benchmark_type") or default_type
-        if isinstance(src, str) and src.startswith("proxy:"):
+        # 005561 等基金净值代理：勿标成 price_index
+        if isinstance(src, str) and (
+                src.startswith("proxy:")
+                or src.startswith("fund_nav_proxy:")
+                or "fund_nav_proxy" in src
+                or "fund_nav:" in src):
+            btype = "fund_nav_proxy"
+        elif btype == "price_index" and code_u == "H30269" and isinstance(src, str) and "005561" in src:
             btype = "fund_nav_proxy"
         meta = {
             "source": src,
