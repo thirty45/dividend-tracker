@@ -401,9 +401,10 @@ def public_payload(payload: dict) -> dict:
         "rebalance_count": payload.get("rebalance_count"),
         "sample_rebalances": payload.get("sample_rebalances") or [],
         "artifacts": {
+            "equity_csv": "equity.csv",
             "note": (
-                "净值曲线 chart.html / equity.csv 仅供内部研究，"
-                "站点不嵌入、不外链"
+                "站点用 equity.csv 画净值曲线；chart.html 仍仅供内部，"
+                "不直接嵌入（避免误挂年化文案）"
             ),
         },
         "summary_note": (

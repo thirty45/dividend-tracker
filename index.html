@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>红利股票跟踪</title>
-  <link rel="stylesheet" href="style.css?v=20261024-backtest">
+  <link rel="stylesheet" href="style.css?v=20261024-backtest-v2">
   <script src="https://cdn.staticfile.org/echarts/5.5.0/echarts.min.js"></script>
   <script>window.echarts||document.write('<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"><\/script>');</script>
   <script src="https://cdn.staticfile.org/pinyin-pro/3.26.0/index.js"></script>
@@ -387,29 +387,36 @@
 
 
     <section id="view-backtest" hidden>
-      <h2 class="bt-title">回测 · 红利池_MA60_等权</h2>
+      <div class="bt-head">
+        <h2 class="bt-title">回测 · 红利池_MA60_等权</h2>
+        <span class="bt-badge">研究回放 · 不可部署</span>
+      </div>
       <div id="bt-policy" class="bt-warn"></div>
+      <div id="bt-rule" class="bt-rule"></div>
       <div id="bt-cards" class="cards"></div>
-      <div id="bt-meta" class="muted bt-meta"></div>
+      <h3>净值曲线</h3>
+      <div id="bt-chart" class="bt-chart"></div>
+      <div id="bt-chart-note" class="muted bt-chart-note"></div>
       <h3>口径与偏差</h3>
       <ul id="bt-bias" class="bt-bias"></ul>
-      <h3>成交填充</h3>
-      <div id="bt-fill" class="muted"></div>
-      <h3>样本调仓（节选）</h3>
-      <div class="table-wrap">
-        <table id="bt-reb-table">
-          <thead>
-            <tr>
-              <th>调仓日</th>
-              <th>信号日</th>
-              <th class="num">持仓只数</th>
-              <th>样本代码（前几只）</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-      <div id="bt-info" class="muted"></div>
+      <details class="bt-fold">
+        <summary>可选细节（填充 / 样本调仓）</summary>
+        <div id="bt-fill" class="muted" style="margin:8px 0"></div>
+        <div class="table-wrap">
+          <table id="bt-reb-table">
+            <thead>
+              <tr>
+                <th>调仓日</th>
+                <th>信号日</th>
+                <th class="num">持仓只数</th>
+                <th>样本代码（前几只）</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </details>
+      <div id="bt-info" class="muted" style="margin-top:10px"></div>
     </section>
 
     <section id="view-detail" hidden>
@@ -557,6 +564,6 @@
     </section>
   </main>
   <footer class="muted">数据来源：东方财富 / 新浪财经 / 天天基金 · 仅供学习参考 · 工作日 18:00 后自动更新</footer>
-  <script src="app.js?v=20261024-backtest"></script>
+  <script src="app.js?v=20261024-backtest-v2"></script>
 </body>
 </html>

@@ -26,8 +26,9 @@ python -m pipeline.backtest --skip-fill-missing  # 不尝试东财补缺 K
 
 ## 站点入口
 
-Pages 顶栏「回测」→ `#/backtest`，只读 `summary.public.json`（过程指标 + 偏差清单）。
-不嵌入 `chart.html`，不展示绝对年化与相对 000922 超额。
+Pages 顶栏「回测」→ `#/backtest`：读 `summary.public.json` + `equity.csv` 画净值曲线（策略 vs 000922 价指；H30269 标 fund proxy）。
+站上可展示：回撤 / 持仓 / 调仓次数 / 偏差 /「研究回放 · 不可部署」。
+**禁止**：绝对年化、相对价指超额、「可实盘」话术。不直接嵌内部 `chart.html`。
 
 ## 口径摘要
 

@@ -1,7 +1,7 @@
 /* 红利股票跟踪 - 前端逻辑（原生JS + ECharts） */
 "use strict";
 /* 版本标识：控制台输入 window.APP_VERSION 可确认浏览器加载的是否最新版（排查缓存用） */
-const APP_VERSION = "2026-10-24-backtest";
+const APP_VERSION = "2026-10-24-backtest-v2";
 try { console.log("[红利股] app.js 版本:", APP_VERSION); } catch (e) { /* 忽略 */ }
 
 window.APP_VERSION = APP_VERSION;
@@ -87,7 +87,7 @@ const state = {
   watchSearch: "",                 // 自选库搜索词
   boardsSearch: "",                // 板块搜索词
   cbondsSearch: "",                // 可转债搜索词
-  backtest: null, backtestLoaded: false,
+  backtest: null, backtestEquity: null, backtestLoaded: false, backtestChart: null,
 };
 
 const fmt = (v, d = 2) =>
@@ -1737,19 +1737,24 @@ function renderWatchlist() {
 }
 
 
-const BT_PUBLIC_PATH = "data/backtest/%E7%BA%A2%E5%88%A9%E6%B1%A0_MA60_%E7%AD%89%E6%9D%83/summary.public.json";
+
+const BT_DIR = "data/backtest/%E7%BA%A2%E5%88%A9%E6%B1%A0_MA60_%E7%AD%89%E6%9D%83/";
+const BT_PUBLIC_PATH = BT_DIR + "summary.public.json";
+const BT_EQUITY_PATH = BT_DIR + "equity.csv";
 
 const BT_BIAS_ZH = {
   "survivorship: current_watchlist_applied_historically":
-    "幸存者偏差：用当前自选池回测历史区间，成分未按当时真实成分还原",
+    "幸存者偏差：用当前自选池（watchlist）回溯历史，成分未按当时真实成分还原",
   "pool_sensitivity: untested":
     "池敏感度未测：尚无历史成分序列做对照",
   "primary_benchmark_000922: price_index (not total return)":
-    "主基准 000922 为价格指数（非全收益），相对超额不可对外展示",
+    "主基准 000922 为价格指数（非全收益），相对超额不上站",
   "H00922 total-return feed unavailable in this environment":
     "全收益官方码 H00922 在本环境无可用行情",
   "missing_kline: 0 (full coverage)":
     "K 线覆盖完整（缺 K=0）",
+  "H30269: fund_nav_proxy":
+    "图中 H30269 线为基金净值 proxy（非指数官方全收益），仅供对照",
 };
 
 function btBiasText(raw) {
@@ -1765,11 +1770,52 @@ function pct1(v) {
   return (Number(v) * 100).toFixed(1) + "%";
 }
 
+function parseEquityCsv(text) {
+  const lines = String(text || "").trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  const header = lines[0].split(",");
+  const idx = {};
+  header.forEach((h, i) => { idx[h.trim()] = i; });
+  if (idx.date == null || idx.equity == null) return null;
+  const dates = [];
+  const equity = [];
+  const bench922 = [];
+  const benchH = [];
+  let hasH = false;
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    if (!cols.length) continue;
+    const d = cols[idx.date];
+    const eq = Number(cols[idx.equity]);
+    if (!d || !Number.isFinite(eq)) continue;
+    dates.push(d);
+    equity.push(eq);
+    let b922 = null;
+    if (idx.bench_000922 != null && cols[idx.bench_000922] !== "") {
+      const n = Number(cols[idx.bench_000922]);
+      b922 = Number.isFinite(n) ? n : null;
+    }
+    bench922.push(b922);
+    let bh = null;
+    if (idx.bench_H30269 != null && cols[idx.bench_H30269] !== "") {
+      const n = Number(cols[idx.bench_H30269]);
+      if (Number.isFinite(n)) { bh = n; hasH = true; }
+    }
+    benchH.push(bh);
+  }
+  return { dates, equity, bench922, benchH, hasH };
+}
+
 function loadBacktest() {
   return loadOnce("backtestLoaded", "回测", async () => {
-    const data = await readJSON(BT_PUBLIC_PATH);
+    const [data, csvText] = await Promise.all([
+      readJSON(BT_PUBLIC_PATH),
+      fetch(BT_EQUITY_PATH).then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status + "：" + BT_EQUITY_PATH);
+        return r.text();
+      }),
+    ]);
     if (!data || !data.display_policy) throw new Error("回测公开摘要格式不正确");
-    // 双保险：即使误载了内部字段也不渲染
     const sm = Object.assign({}, data.summary || {});
     ["ann_return", "total_return", "final_nav", "excess_total", "excess_ann",
      "bench_total_return", "bench_ann_return", "bench_max_drawdown"].forEach((k) => {
@@ -1777,7 +1823,88 @@ function loadBacktest() {
     });
     data.summary = sm;
     state.backtest = data;
+    state.backtestEquity = parseEquityCsv(csvText);
   });
+}
+
+function renderBacktestChart() {
+  const el = $("#bt-chart");
+  const note = $("#bt-chart-note");
+  if (!el) return;
+  const eq = state.backtestEquity;
+  if (!eq || !eq.dates.length) {
+    resetChart("backtestChart", "#bt-chart", "净值曲线加载失败");
+    if (note) note.textContent = "";
+    return;
+  }
+  if (state.backtestChart) {
+    try { state.backtestChart.dispose(); } catch (e) { /* ignore */ }
+    state.backtestChart = null;
+  }
+  el.innerHTML = "";
+  if (!window.echarts) {
+    el.innerHTML = '<div class="muted" style="padding:20px">图表库未加载</div>';
+    return;
+  }
+  state.backtestChart = echarts.init(el);
+  const series = [
+    {
+      name: "策略",
+      type: "line",
+      data: eq.equity,
+      showSymbol: false,
+      lineStyle: { width: 1.8, color: "#1f77b4" },
+    },
+    {
+      name: "000922（价格指数）",
+      type: "line",
+      data: eq.bench922,
+      showSymbol: false,
+      connectNulls: false,
+      lineStyle: { width: 1.5, color: "#d62728" },
+    },
+  ];
+  if (eq.hasH) {
+    series.push({
+      name: "H30269（基金净值 proxy）",
+      type: "line",
+      data: eq.benchH,
+      showSymbol: false,
+      connectNulls: false,
+      lineStyle: { width: 1.3, color: "#2ca02c", type: "dashed" },
+    });
+  }
+  state.backtestChart.setOption({
+    animation: false,
+    grid: { left: 12, right: 16, top: 36, bottom: 48, containLabel: true },
+    legend: { top: 0, textStyle: { fontSize: 11 } },
+    tooltip: {
+      trigger: "axis",
+      valueFormatter: (v) => (v == null || !Number.isFinite(Number(v)) ? "—" : Number(v).toFixed(4)),
+    },
+    xAxis: {
+      type: "category",
+      data: eq.dates,
+      axisLabel: { fontSize: 10, showMaxLabel: true },
+    },
+    yAxis: {
+      type: "value",
+      scale: true,
+      name: "净值",
+      nameTextStyle: { fontSize: 11, color: "#666" },
+      axisLabel: { fontSize: 10 },
+    },
+    dataZoom: [
+      { type: "inside", start: 0, end: 100 },
+      { type: "slider", start: 0, end: 100, height: 16, bottom: 8 },
+    ],
+    series,
+  }, true);
+  if (note) {
+    note.textContent = eq.hasH
+      ? "图例：策略净值 vs 000922 价格指数；H30269 为基金净值 proxy（非官方全收益指数）。图中不标注年化或超额。"
+      : "图例：策略净值 vs 000922 价格指数（非全收益）。图中不标注年化或超额。";
+  }
 }
 
 function renderBacktest() {
@@ -1788,43 +1915,42 @@ function renderBacktest() {
     return;
   }
   const pol = d.display_policy || {};
-  const reason = pol.reason || "不可部署；禁止展示绝对年化与相对价指超额。";
+  const reason = pol.reason || "幸存者偏差未修；主基准为价格指数；禁止展示绝对年化与相对价指超额。";
   $("#bt-policy").innerHTML =
-    "<b>展示闸门</b>：deployable=" + esc(String(!!d.deployable)) +
-    " · absolute_ann_return / excess_vs_000922 = <code>forbidden_for_public</code>。" +
-    "<br>" + esc(reason) +
-    " 本页只列过程指标，不嵌入净值曲线。";
+    "<b>研究回放 · 不可部署</b>（deployable=false）。" +
+    "禁止展示全期/分段绝对年化，以及相对 000922（或任何价指）超额。" +
+    "<br>" + esc(reason);
 
   const sm = d.summary || {};
+  const meta = d.meta || {};
+  const cost = d.cost || {};
+  const rule =
+    "调仓规则：月末收盘后按不复权收盘 ≥ MA60 选股（当前 watchlist 交集），下一交易日开盘等权换仓；" +
+    "成本单边 " + (cost.one_way != null ? pct1(cost.one_way) : "0.03%") +
+    "，价格口径 " + (meta.price_basis || "bfq") + "。";
+  $("#bt-rule").textContent =
+    "策略「" + (d.strategy || "红利池_MA60_等权") + "」· 区间 " +
+    (sm.start || meta.beg || "—") + " ~ " + (sm.end || meta.end || "—") +
+    " · " + rule;
+
   const cards = [
     ["区间", (sm.start || "—") + " ~ " + (sm.end || "—")],
-    ["交易日", sm.days != null ? String(sm.days) : "—"],
     ["最大回撤", pct1(sm.max_drawdown)],
     ["平均持仓", sm.avg_holdings != null ? fmt(sm.avg_holdings, 1) + " 只" : "—"],
     ["调仓次数", d.rebalance_count != null ? String(d.rebalance_count) : "—"],
-    ["年化换手", sm.ann_turnover != null ? fmt(sm.ann_turnover, 2) + "×" : "—"],
   ];
   $("#bt-cards").innerHTML = cards.map(([k, v]) =>
     '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + esc(v) + "</div></div>"
   ).join("");
 
-  const meta = d.meta || {};
-  const cost = d.cost || {};
-  const bp = d.benchmark_primary || {};
-  const bits = [];
-  bits.push("选股：当前 watchlist ∩ 不复权月末收盘 ≥ MA60（不含首页 year_low/premium）");
-  bits.push("调仓：月末收盘后算信号，下一交易日开盘成交");
-  bits.push("成本：单边 " + (cost.one_way != null ? pct1(cost.one_way) : "万三") +
-    "，滑点 " + (cost.slippage != null ? String(cost.slippage) : "0"));
-  bits.push("价格口径：" + (meta.price_basis || "bfq"));
-  bits.push("宇宙 " + (meta.universe_size != null ? meta.universe_size : "—") +
-    " 只 · pool_sensitivity=" + (d.pool_sensitivity || "—"));
-  bits.push("主基准 " + (bp.code || "000922") + "（" +
-    (bp.benchmark_type || "price_index") + "，excess_public=" +
-    String(!!bp.excess_public) + "）");
-  $("#bt-meta").textContent = bits.join(" · ");
+  renderBacktestChart();
 
-  const bias = Array.isArray(d.bias_list) ? d.bias_list : [];
+  const bias = Array.isArray(d.bias_list) ? d.bias_list.slice() : [];
+  if (state.backtestEquity && state.backtestEquity.hasH &&
+      !bias.some((b) => String(b).indexOf("H30269") >= 0)) {
+    bias.push("H30269: fund_nav_proxy");
+  }
+  // 确保幸存者 / 价指两条总有中文
   $("#bt-bias").innerHTML = bias.length
     ? bias.map((b) => "<li>" + esc(btBiasText(b)) + "</li>").join("")
     : "<li>—</li>";
@@ -1832,26 +1958,36 @@ function renderBacktest() {
   const fill = d.fill_stats || {};
   const share = fill.share || {};
   const counts = fill.counts || {};
+  const uni = meta.universe_size;
+  const miss = meta.missing_kline;
+  const cover = (uni != null && miss != null)
+    ? ("覆盖 " + (uni - miss) + "/" + uni)
+    : (uni != null ? ("宇宙 " + uni + " 只") : "");
   const fillParts = ["open", "close", "ffill", "missing"].map((k) => {
     const c = counts[k];
     const s = share[k];
     return k + "=" + (c != null ? c : "—") +
       (s != null ? "（" + pct1(s) + "）" : "");
   });
-  $("#bt-fill").textContent = fillParts.join(" · ");
+  $("#bt-fill").textContent =
+    (cover ? cover + " · " : "") + fillParts.join(" · ");
 
   const rows = Array.isArray(d.sample_rebalances) ? d.sample_rebalances : [];
   const tbody = $("#bt-reb-table tbody");
-  tbody.innerHTML = rows.map((r) => {
-    const head = (r.selected_head || []).slice(0, 8).join(" ");
-    const more = r.selected_truncated ? " …+" + r.selected_truncated : "";
-    return "<tr><td>" + esc(r.date || "—") + "</td><td>" + esc(r.signal_date || "—") +
-      "</td><td class=\"num\">" + esc(r.n != null ? String(r.n) : "—") +
-      "</td><td class=\"code-list\">" + esc(head + more) + "</td></tr>";
-  }).join("") || "<tr><td colspan=\"4\" class=\"muted\">暂无样本调仓</td></tr>";
+  if (tbody) {
+    tbody.innerHTML = rows.map((r) => {
+      const head = (r.selected_head || []).slice(0, 8).join(" ");
+      const more = r.selected_truncated ? " …+" + r.selected_truncated : "";
+      return "<tr><td>" + esc(r.date || "—") + "</td><td>" + esc(r.signal_date || "—") +
+        "</td><td class=\"num\">" + esc(r.n != null ? String(r.n) : "—") +
+        "</td><td class=\"code-list\">" + esc(head + more) + "</td></tr>";
+    }).join("") || "<tr><td colspan=\"4\" class=\"muted\">暂无样本调仓</td></tr>";
+  }
 
-  const note = d.artifacts && d.artifacts.note ? d.artifacts.note : "";
-  info.textContent = (d.summary_note || "") + (note ? " · " + note : "");
+  if (info) {
+    info.textContent = "本页为研究回放，不构成可实盘或稳健 alpha 结论。" +
+      (d.summary_note ? " " + d.summary_note : "");
+  }
 }
 
 

@@ -313,14 +313,27 @@ footer { text-align: center; padding: 18px 10px 30px; }
 
 
 /* ===== 回测入口 ===== */
-.bt-title { font-size: 18px; margin: 4px 0 10px; }
+.bt-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin: 4px 0 10px; }
+.bt-title { font-size: 18px; margin: 0; }
+.bt-badge {
+  display: inline-block; font-size: 12px; font-weight: 600;
+  color: #8a5a00; background: #ffe8a3; border: 1px solid #f0c96a;
+  border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+}
 .bt-warn {
   background: #fff8e6; border: 1px solid #f0d58a; color: #5c4813;
   border-radius: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.55;
-  margin: 0 0 12px;
+  margin: 0 0 10px;
 }
-.bt-meta { margin: 4px 0 14px; line-height: 1.55; }
+.bt-rule { font-size: 13px; line-height: 1.55; margin: 0 0 12px; }
+.bt-chart { width: 100%; height: 380px; min-height: 280px; }
+.bt-chart-note { margin: 4px 0 14px; line-height: 1.5; }
 .bt-bias { margin: 0 0 14px; padding-left: 1.2em; font-size: 13px; line-height: 1.6; }
 .bt-bias li { margin: 2px 0; }
+.bt-fold { margin: 8px 0 12px; font-size: 13px; }
+.bt-fold summary { cursor: pointer; color: var(--muted); user-select: none; }
 #bt-reb-table { font-size: 12px; }
 #bt-reb-table td.code-list { color: var(--muted); max-width: 420px; word-break: break-all; }
+@media (max-width: 640px) {
+  .bt-chart { height: 280px; }
+}
