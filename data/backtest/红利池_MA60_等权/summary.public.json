@@ -1,0 +1,296 @@
+{
+  "strategy": "红利池_MA60_等权",
+  "display_policy": {
+    "deployable": false,
+    "absolute_ann_return": "forbidden_for_public",
+    "excess_vs_000922": "forbidden_for_public",
+    "allowed": [
+      "max_drawdown",
+      "avg_holdings",
+      "rebalance_count",
+      "fill_stats",
+      "bias_list",
+      "yearly_attribution_internal",
+      "start_sensitivity_with_excess_internal"
+    ],
+    "reason": "幸存者偏差未修 + 主基准仍为价格指数(000922)，全收益官方码 H00922 行情不可用；禁止对外展示绝对年化与相对价指超额"
+  },
+  "deployable": false,
+  "pool_sensitivity": "untested",
+  "meta": {
+    "strategy": "红利池_MA60_等权",
+    "beg": "2018-01-01",
+    "end": "2026-10-24",
+    "cost_one_way": 0.0003,
+    "slippage": 0.0,
+    "price_basis": "bfq",
+    "ma_months": 60,
+    "selection": "watchlist ∩ month_end_close >= MA60(bfq)",
+    "survivorship": "current_watchlist_applied_historically",
+    "universe_size": 817,
+    "watchlist_size": 817,
+    "missing_kline": 0
+  },
+  "cost": {
+    "one_way": 0.0003,
+    "slippage": 0.0,
+    "note": "单边万三，滑点 0"
+  },
+  "benchmark_primary": {
+    "code": "000922",
+    "benchmark_type": "price_index",
+    "excess_public": false,
+    "source": "tencent:sh000922",
+    "notes": [],
+    "total_return_code": "H00922",
+    "total_return_available": false,
+    "total_return_meta": {
+      "source": "unavailable:H00922",
+      "benchmark_type": "price_index",
+      "role": "secondary",
+      "notes": [
+        "H00922(中证红利全收益) 东财/腾讯/新浪在本环境不可用；已确认 csindex 基本信息存在（CSI Dividend TRI）"
+      ],
+      "excess_public": false
+    }
+  },
+  "summary": {
+    "start": "2018-01-02",
+    "end": "2026-10-23",
+    "days": 2134,
+    "max_drawdown": 0.3801607705650487,
+    "avg_holdings": 254.88430913348947,
+    "avg_daily_turnover": 0.015390210799461637,
+    "ann_turnover": 3.8783331214643324
+  },
+  "fill_stats": {
+    "counts": {
+      "open": 29534,
+      "close": 0,
+      "ffill": 932,
+      "missing": 24
+    },
+    "share": {
+      "open": 0.9686454575270581,
+      "close": 0.0,
+      "ffill": 0.030567399147261396,
+      "missing": 0.000787143325680551
+    }
+  },
+  "missing_kline_codes": [],
+  "bias_list": [
+    "survivorship: current_watchlist_applied_historically",
+    "pool_sensitivity: untested",
+    "primary_benchmark_000922: price_index (not total return)",
+    "H00922 total-return feed unavailable in this environment",
+    "missing_kline: 0 (full coverage)"
+  ],
+  "rebalance_count": 106,
+  "sample_rebalances": [
+    {
+      "date": "2018-01-02",
+      "signal_date": "2017-12-29",
+      "n": 216,
+      "selected_head": [
+        "000001",
+        "000026",
+        "000028",
+        "000039",
+        "000049",
+        "000063",
+        "000088",
+        "000089"
+      ],
+      "selected_truncated": 208,
+      "weights_head": {
+        "000001": 0.004628241157282444,
+        "000026": 0.004628241157282445,
+        "000028": 0.004628241157282445,
+        "000039": 0.004628241157282445,
+        "000049": 0.004628241157282445,
+        "000063": 0.004628241157282444,
+        "000088": 0.004628241157282445,
+        "000089": 0.004628241157282444
+      },
+      "prices_head": {
+        "000001": 13.35,
+        "000026": 11.29,
+        "000028": 60.32,
+        "000039": 22.75,
+        "000049": 1827.12,
+        "000063": 36.48,
+        "000088": 7.64,
+        "000089": 8.7
+      },
+      "fill_head": {
+        "000001": "open",
+        "000026": "open",
+        "000028": "open",
+        "000039": "open",
+        "000049": "open",
+        "000063": "open",
+        "000088": "open",
+        "000089": "open"
+      },
+      "nav_before": 1000000.0,
+      "turnover_notional": 999700.0899730122,
+      "fees": 299.9100269919037,
+      "trades_n": 216
+    },
+    {
+      "date": "2018-02-01",
+      "signal_date": "2018-01-31",
+      "n": 231,
+      "selected_head": [
+        "000001",
+        "000028",
+        "000039",
+        "000049",
+        "000063",
+        "000088",
+        "000089",
+        "000100"
+      ],
+      "selected_truncated": 223,
+      "weights_head": {
+        "000001": 0.004329004329004329,
+        "000028": 0.004329004329004329,
+        "000039": 0.004328948012463255,
+        "000049": 0.004329004329004329,
+        "000063": 0.004328622351439333,
+        "000088": 0.004329004329004329,
+        "000089": 0.004329004329004329,
+        "000100": 0.004328885551847691
+      },
+      "prices_head": {
+        "000001": 13.95,
+        "000028": 59.15,
+        "000039": 21.46,
+        "000049": 1879.24,
+        "000063": 30.0,
+        "000088": 8.07,
+        "000089": 9.01,
+        "000100": 3.57
+      },
+      "fill_head": {
+        "000001": "open",
+        "000028": "open",
+        "000039": "open",
+        "000049": "open",
+        "000063": "open",
+        "000088": "open",
+        "000089": "open",
+        "000100": "open"
+      },
+      "nav_before": 1030858.5123384537,
+      "turnover_notional": 224774.67303367547,
+      "fees": 67.43240191010261,
+      "trades_n": 238
+    },
+    {
+      "date": "2026-09-01",
+      "signal_date": "2026-08-31",
+      "n": 302,
+      "selected_head": [
+        "000026",
+        "000063",
+        "000100",
+        "000333",
+        "000338",
+        "000404",
+        "000408",
+        "000425"
+      ],
+      "selected_truncated": 294,
+      "weights_head": {
+        "000026": 0.0033112582781456954,
+        "000063": 0.003311184759016381,
+        "000100": 0.0033112582781456945,
+        "000333": 0.003311168304825979,
+        "000338": 0.003311127235879954,
+        "000404": 0.0033109870073576493,
+        "000408": 0.003311156444741291,
+        "000425": 0.0033109605791299796
+      },
+      "prices_head": {
+        "000026": 20.55,
+        "000063": 33.99,
+        "000100": 5.09,
+        "000333": 87.9,
+        "000338": 27.49,
+        "000404": 7.09,
+        "000408": 79.87,
+        "000425": 8.0
+      },
+      "fill_head": {
+        "000026": "open",
+        "000063": "open",
+        "000100": "open",
+        "000333": "open",
+        "000338": "open",
+        "000404": "open",
+        "000408": "open",
+        "000425": "open"
+      },
+      "nav_before": 1750251.9984555922,
+      "turnover_notional": 440494.7148718166,
+      "fees": 132.14841446154475,
+      "trades_n": 333
+    },
+    {
+      "date": "2026-10-08",
+      "signal_date": "2026-09-30",
+      "n": 287,
+      "selected_head": [
+        "000026",
+        "000100",
+        "000333",
+        "000338",
+        "000404",
+        "000408",
+        "000429",
+        "000543"
+      ],
+      "selected_truncated": 279,
+      "weights_head": {
+        "000026": 0.003484104004259045,
+        "000100": 0.003484174485852421,
+        "000333": 0.0034841228077137523,
+        "000338": 0.0034841496130207307,
+        "000404": 0.0034842100302801657,
+        "000408": 0.003484086734285509,
+        "000429": 0.003484164493972643,
+        "000543": 0.0034842568737868244
+      },
+      "prices_head": {
+        "000026": 18.67,
+        "000100": 4.8,
+        "000333": 80.67,
+        "000338": 25.59,
+        "000404": 6.81,
+        "000408": 71.89,
+        "000429": 12.45,
+        "000543": 7.13
+      },
+      "fill_head": {
+        "000026": "open",
+        "000100": "open",
+        "000333": "open",
+        "000338": "open",
+        "000404": "open",
+        "000408": "open",
+        "000429": "open",
+        "000543": "open"
+      },
+      "nav_before": 1687513.9709013444,
+      "turnover_notional": 502586.9067230524,
+      "fees": 150.7760720169159,
+      "trades_n": 328
+    }
+  ],
+  "artifacts": {
+    "equity_csv": "equity.csv",
+    "note": "站点用 equity.csv 画净值曲线；chart.html 仍仅供内部，不直接嵌入（避免误挂年化文案）"
+  },
+  "summary_note": "本文件为站点公开子集；绝对年化与相对 000922 超额见内部 summary.json，禁止对外展示"
+}

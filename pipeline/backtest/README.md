@@ -22,7 +22,13 @@ python -m pipeline.backtest --skip-download  # 已有 data/kline_raw
 python -m pipeline.backtest --skip-fill-missing  # 不尝试东财补缺 K
 ```
 
-结果目录：`data/backtest/红利池_MA60_等权/`（`summary.json` / `equity.csv` / `chart.html`）。
+结果目录：`data/backtest/红利池_MA60_等权/`（`summary.json` 内部 / `summary.public.json` 站点 / `equity.csv` / `chart.html`）。
+
+## 站点入口
+
+Pages 顶栏「回测」→ `#/backtest`：读 `summary.public.json` + `equity.csv` 画净值曲线（策略 vs 000922 价指；H30269 标 fund proxy）。
+站上可展示：回撤 / 持仓 / 调仓次数 / 偏差 /「研究回放 · 不可部署」。
+**禁止**：绝对年化、相对价指超额、「可实盘」话术。不直接嵌内部 `chart.html`。
 
 ## 口径摘要
 
