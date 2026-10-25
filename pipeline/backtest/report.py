@@ -367,12 +367,61 @@ def build_report_payload(result, bench_series: Dict[str, List[float]],
     return payload
 
 
+# summary 里允许对外展示的过程字段（其余为内部）
+_PUBLIC_SUMMARY_KEYS = (
+    "start", "end", "days", "max_drawdown",
+    "avg_holdings", "avg_daily_turnover", "ann_turnover",
+)
+
+
+def public_payload(payload: dict) -> dict:
+    """从完整 summary 抽出站点可展示子集；不含绝对年化/价指超额。"""
+    sm = payload.get("summary") or {}
+    public_summary = {k: sm[k] for k in _PUBLIC_SUMMARY_KEYS if k in sm}
+    return {
+        "strategy": payload.get("strategy"),
+        "display_policy": dict(payload.get("display_policy") or DISPLAY_POLICY),
+        "deployable": False,
+        "pool_sensitivity": payload.get("pool_sensitivity"),
+        "meta": {
+            k: (payload.get("meta") or {}).get(k)
+            for k in (
+                "strategy", "beg", "end", "cost_one_way", "slippage",
+                "price_basis", "ma_months", "selection", "survivorship",
+                "universe_size", "watchlist_size", "missing_kline",
+            )
+            if (payload.get("meta") or {}).get(k) is not None
+        },
+        "cost": payload.get("cost"),
+        "benchmark_primary": payload.get("benchmark_primary"),
+        "summary": public_summary,
+        "fill_stats": payload.get("fill_stats"),
+        "missing_kline_codes": payload.get("missing_kline_codes") or [],
+        "bias_list": list(payload.get("bias_list") or []),
+        "rebalance_count": payload.get("rebalance_count"),
+        "sample_rebalances": payload.get("sample_rebalances") or [],
+        "artifacts": {
+            "note": (
+                "净值曲线 chart.html / equity.csv 仅供内部研究，"
+                "站点不嵌入、不外链"
+            ),
+        },
+        "summary_note": (
+            "本文件为站点公开子集；绝对年化与相对 000922 超额见内部 summary.json，"
+            "禁止对外展示"
+        ),
+    }
+
+
+
 def write_all(out_dir: str, result, bench_series: Dict[str, List[float]],
               bench_meta: Dict[str, dict],
               extra_meta: Optional[dict] = None) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     payload = build_report_payload(result, bench_series, bench_meta, extra_meta)
     write_summary_json(os.path.join(out_dir, "summary.json"), payload)
+    write_summary_json(os.path.join(out_dir, "summary.public.json"),
+                       public_payload(payload))
     write_equity_csv(
         os.path.join(out_dir, "equity.csv"),
         result.dates, result.equity, result.n_holdings, result.turnover,

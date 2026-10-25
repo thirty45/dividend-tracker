@@ -22,7 +22,12 @@ python -m pipeline.backtest --skip-download  # 已有 data/kline_raw
 python -m pipeline.backtest --skip-fill-missing  # 不尝试东财补缺 K
 ```
 
-结果目录：`data/backtest/红利池_MA60_等权/`（`summary.json` / `equity.csv` / `chart.html`）。
+结果目录：`data/backtest/红利池_MA60_等权/`（`summary.json` 内部 / `summary.public.json` 站点 / `equity.csv` / `chart.html`）。
+
+## 站点入口
+
+Pages 顶栏「回测」→ `#/backtest`，只读 `summary.public.json`（过程指标 + 偏差清单）。
+不嵌入 `chart.html`，不展示绝对年化与相对 000922 超额。
 
 ## 口径摘要
 

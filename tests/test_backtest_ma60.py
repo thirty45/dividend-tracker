@@ -275,3 +275,42 @@ class MetricsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPublicPayload(unittest.TestCase):
+    def test_strips_forbidden_returns(self):
+        from pipeline.backtest.report import public_payload, DISPLAY_POLICY
+        payload = {
+            "strategy": "x",
+            "display_policy": DISPLAY_POLICY,
+            "deployable": False,
+            "pool_sensitivity": "untested",
+            "meta": {"beg": "2018-01-01", "end": "2020-01-01", "price_basis": "bfq",
+                     "universe_size": 10},
+            "cost": {"one_way": 0.0003, "slippage": 0.0},
+            "benchmark_primary": {"code": "000922", "benchmark_type": "price_index",
+                                  "excess_public": False},
+            "summary": {
+                "start": "2018-01-02", "end": "2019-12-31", "days": 100,
+                "final_nav": 1.5, "total_return": 0.5, "ann_return": 0.1,
+                "max_drawdown": 0.2, "avg_holdings": 50.0,
+                "avg_daily_turnover": 0.01, "ann_turnover": 2.0,
+                "excess_ann": 0.05, "bench_ann_return": 0.02,
+            },
+            "fill_stats": {"counts": {}, "share": {}},
+            "missing_kline_codes": [],
+            "bias_list": ["survivorship: current_watchlist_applied_historically"],
+            "rebalance_count": 3,
+            "sample_rebalances": [],
+            "start_sensitivity": {"全期": {}},
+            "yearly_attribution": [{"year": 2018}],
+        }
+        pub = public_payload(payload)
+        self.assertFalse(pub["deployable"])
+        self.assertIn("max_drawdown", pub["summary"])
+        self.assertNotIn("ann_return", pub["summary"])
+        self.assertNotIn("excess_ann", pub["summary"])
+        self.assertNotIn("final_nav", pub["summary"])
+        self.assertNotIn("start_sensitivity", pub)
+        self.assertNotIn("yearly_attribution", pub)
+
