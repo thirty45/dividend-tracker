@@ -11,17 +11,8 @@
     "601326:raw"
   ],
   "partial_history": [],
-  "updated_at": "2026-10-26T12:26:27+00:00",
+  "updated_at": "2026-10-26T16:37:26+00:00",
   "repairs": [
-    {
-      "code": "603365",
-      "mode": "kline",
-      "status": "updated",
-      "count": 2166,
-      "start": "2017-11-20",
-      "end": "2026-10-26",
-      "errors": []
-    },
     {
       "code": "601198",
       "mode": "kline",
