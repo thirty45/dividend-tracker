@@ -1,5 +1,5 @@
 {
-  "target_date": "2026-10-23",
+  "target_date": "2026-10-26",
   "stocks": 711,
   "expected_series": 1422,
   "usable_series": 1422,
@@ -11,23 +11,16 @@
     "601326:raw"
   ],
   "partial_history": [],
-  "updated_at": "2026-10-23T15:04:09+00:00",
+  "updated_at": "2026-10-26T12:26:27+00:00",
   "repairs": [
     {
-      "code": "601326",
+      "code": "603365",
       "mode": "kline",
-      "status": "failed",
-      "errors": [
-        "各数据源均未取到 2026-10-20 之后的K线"
-      ]
-    },
-    {
-      "code": "601326",
-      "mode": "kline_raw",
-      "status": "failed",
-      "errors": [
-        "各数据源均未取到 2026-10-20 之后的K线"
-      ]
+      "status": "updated",
+      "count": 2166,
+      "start": "2017-11-20",
+      "end": "2026-10-26",
+      "errors": []
     },
     {
       "code": "601198",
@@ -43,6 +36,22 @@
       "status": "failed",
       "errors": [
         "各数据源均未取到 2026-09-14 之后的K线"
+      ]
+    },
+    {
+      "code": "601326",
+      "mode": "kline",
+      "status": "failed",
+      "errors": [
+        "各数据源均未取到 2026-10-20 之后的K线"
+      ]
+    },
+    {
+      "code": "601326",
+      "mode": "kline_raw",
+      "status": "failed",
+      "errors": [
+        "各数据源均未取到 2026-10-20 之后的K线"
       ]
     }
   ],
