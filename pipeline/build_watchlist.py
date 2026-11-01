@@ -23,57 +23,6 @@ def load_config():
         return json.load(f)
 
 
-
-QUALITY_TAG = "优质红利"
-
-
-def load_quality_pool(data_meta):
-    """读取手维优质红利池；文件缺失或格式异常时返回空列表。"""
-    path = os.path.join(data_meta, "quality_pool.json")
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
-    items = data.get("items") or data.get("stocks") or []
-    out = []
-    for it in items:
-        code = str((it or {}).get("code") or "").zfill(6)
-        if len(code) != 6 or not code.isdigit():
-            continue
-        out.append({
-            "code": code,
-            "name": (it.get("name") or code),
-            "weight_pct": it.get("weight_pct", it.get("target_weight_pct")),
-            "sector": it.get("sector") or "",
-        })
-    return out
-
-
-def merge_quality_pool(stocks, data_meta):
-    """质量过滤后强制并入优质红利池代码，并返回池内代码集合。
-
-    stocks: {code: {name, funds, max_pct, indices, ...}}
-    不改变其它股票的过滤结果；仅补回被剔除的池内标的。
-    """
-    pool = load_quality_pool(data_meta)
-    codes = set()
-    for it in pool:
-        code = it["code"]
-        codes.add(code)
-        if code in stocks:
-            continue
-        stocks[code] = {
-            "name": it["name"],
-            "funds": set(),
-            "max_pct": 0.0,
-            "indices": [],
-        }
-    return codes
-
-
 def main():
     if sys.stdout and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -318,10 +267,6 @@ def main():
     examples2 = ["%s(%s)" % (c, n) for c, n in (removed_low + removed_loss)[:15]]
     print("   剔除示例: " + ", ".join(examples2))
 
-    quality_codes = merge_quality_pool(stocks, data_meta)
-    if quality_codes:
-        print("   优质红利强制入池 %d 只" % len(quality_codes))
-
     out = []
     for code, st in sorted(stocks.items()):
         tags = []
@@ -330,8 +275,6 @@ def main():
         for t in (st.get("indices") or []):
             if t not in tags:
                 tags.append(t)
-        if code in quality_codes and QUALITY_TAG not in tags:
-            tags.append(QUALITY_TAG)
         out.append({
             "code": code,
             "name": st["name"],
