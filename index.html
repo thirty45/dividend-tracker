@@ -26,6 +26,7 @@
         <button id="tab-hk">港股通</button>
         <button id="tab-social">社保基金</button>
         <button id="tab-soe">国资红利</button>
+        <button id="tab-quality">优质红利</button>
         <button id="tab-watch">自选库</button>
         <button id="tab-backtest">回测</button>
       </nav>
@@ -360,6 +361,33 @@
         </table>
       </div>
       <div id="soe-info" class="muted"></div>
+    </section>
+
+
+    <section id="view-quality" hidden>
+      <div class="muted" style="margin-bottom:8px">
+        来源：月月红组合核心标的截图导入 · 权重为外部预期仓位（非本站回测）·
+        <button type="button" id="quality-import-watch" class="linkish">一键导入自选</button>
+        <span id="quality-import-msg" class="muted"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="quality-table">
+          <thead>
+            <tr>
+              <th>名称(代码)</th>
+              <th class="num">预期仓位%</th>
+              <th class="num">股息率TTM%</th>
+              <th class="num">市盈率</th>
+              <th class="num">市净率</th>
+              <th class="num">ROE%</th>
+              <th class="num">总市值(亿)</th>
+              <th>行业</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="quality-info" class="muted"></div>
     </section>
 
     <section id="view-watchlist" hidden>

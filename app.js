@@ -82,6 +82,7 @@ const state = {
   socialSort: { inc: { k: "change_num", asc: false },
                 dec: { k: "change_num", asc: true } },
   soe: { items: [] }, soeLoaded: false, soeCat: "all", soeSearch: "",
+  quality: { items: [] }, qualityLoaded: false, qualitySearch: "",
   watch: [],                       // 自选库（localStorage 持久化）
   watchCode: null,                 // 当前详情页正在编辑的股票
   watchSearch: "",                 // 自选库搜索词
@@ -288,7 +289,7 @@ function showView(name) {
     ++state.detailRequest; ++state.hkDetailRequest; ++state.fundDetailRequest;
   }
   ["list", "boards", "detail", "tag", "funds", "fund-detail", "cbonds",
-   "hk", "hk-detail", "social", "soe", "watchlist", "backtest"].forEach((v) => {
+   "hk", "hk-detail", "social", "soe", "quality", "watchlist", "backtest"].forEach((v) => {
     const el = $("#view-" + v);
     if (el) el.hidden = v !== name;
   });
@@ -299,13 +300,16 @@ function showView(name) {
   $("#tab-hk").classList.toggle("active", name === "hk" || name === "hk-detail");
   $("#tab-social").classList.toggle("active", name === "social");
   $("#tab-soe").classList.toggle("active", name === "soe");
+  const tabQuality = $("#tab-quality");
+  if (tabQuality) tabQuality.classList.toggle("active", name === "quality");
   $("#tab-watch").classList.toggle("active", name === "watchlist");
   const tabBt = $("#tab-backtest");
   if (tabBt) tabBt.classList.toggle("active", name === "backtest");
   state.view = name;
   const searchKey = { list: "search", detail: "search", tag: "search", boards: "boardsSearch",
     funds: "fundSearch", "fund-detail": "fundSearch", hk: "hkSearch", "hk-detail": "hkSearch",
-    cbonds: "cbondsSearch", social: "socialSearch", soe: "soeSearch", watchlist: "watchSearch" }[name];
+    cbonds: "cbondsSearch", social: "socialSearch", soe: "soeSearch",
+    quality: "qualitySearch", watchlist: "watchSearch" }[name];
   if (searchKey && $("#search")) $("#search").value = state[searchKey] || "";
   window.scrollTo(0, 0);
 }
@@ -1573,6 +1577,109 @@ function renderSoe() {
   }
 }
 
+
+// ==================== 优质红利（月月红组合核心标的） ====================
+function loadQuality() {
+  return loadOnce("qualityLoaded", "优质红利", async () => {
+    const d = await readJSON("data/meta/quality_pool.json");
+    if (!d || !Array.isArray(d.items)) throw new Error("优质红利数据格式不正确");
+    state.quality = d;
+    const meta = $("#meta");
+    if (meta && d.count) meta.textContent += " · 优质红利 " + d.count + " 只";
+  });
+}
+
+function qualityFiltered() {
+  let list = (state.quality.items || []).slice();
+  const q = (state.qualitySearch || "").trim().toLowerCase();
+  if (q) {
+    list = list.filter(
+      (x) =>
+        x.code.includes(q) ||
+        (x.name || "").toLowerCase().includes(q) ||
+        (x.sector || "").toLowerCase().includes(q) ||
+        initials(x.name || "").includes(q)
+    );
+  }
+  return list;
+}
+
+function qualityRowHTML(x) {
+  const st = (state.qualityStockMap && state.qualityStockMap.get(x.code)) || {};
+  const industry = st.industry || x.sector || "—";
+  return `<tr data-code="${x.code}">
+    <td>${esc(x.name || "—")}(${x.code})</td>
+    <td class="num">${x.weight_pct == null ? "—" : fmt(x.weight_pct, 2)}</td>
+    <td class="num">${st.dy == null ? "—" : fmt(st.dy, 2)}</td>
+    <td class="num">${st.pe == null ? "—" : fmt(st.pe)}</td>
+    <td class="num">${st.pb == null ? "—" : fmt(st.pb)}</td>
+    <td class="num">${st.roe == null ? "—" : fmt(st.roe, 2)}</td>
+    <td class="num">${st.mv == null ? "—" : fmt(st.mv, 1)}</td>
+    <td>${esc(industry)}</td></tr>`;
+}
+
+function renderQuality() {
+  state.qualityStockMap = new Map((state.stocks || []).map((s) => [s.code, s]));
+  const list = qualityFiltered().sort(
+    (a, b) => (Number(b.weight_pct) || 0) - (Number(a.weight_pct) || 0)
+  );
+  const tb = $("#quality-table tbody");
+  if (tb) tb.innerHTML = list.map(qualityRowHTML).join("");
+  const info = $("#quality-info");
+  if (info) {
+    const parts = [];
+    if ((state.qualitySearch || "").trim()) parts.push("搜索：" + state.qualitySearch.trim());
+    parts.push("池内 " + ((state.quality.items || []).length) + " 只");
+    parts.push("显示 " + list.length + " 只");
+    const src = state.quality.source || "";
+    if (src) parts.push("来源：" + src);
+    info.textContent = parts.join(" · ");
+  }
+  if (tb) {
+    tb.querySelectorAll("tr").forEach((tr) =>
+      tr.addEventListener("click", () => { location.hash = "#/stock/" + tr.dataset.code; })
+    );
+  }
+}
+
+function importQualityToWatch() {
+  const items = state.quality.items || [];
+  let added = 0, updated = 0, skipped = 0;
+  const note = "优质红利·月月红";
+  const today = new Date().toLocaleDateString("zh-CN");
+  items.forEach((it) => {
+    const code = it.code;
+    if (!code) return;
+    const existing = state.watch.find((w) => w.code === code);
+    if (existing) {
+      // 已有：不覆盖用户备忘；备忘为空时补来源标记
+      if (!(existing.reason || "").trim()) {
+        existing.reason = note;
+        updated += 1;
+      } else {
+        skipped += 1;
+      }
+      if (!existing.name && it.name) existing.name = it.name;
+    } else {
+      state.watch.push({
+        code,
+        name: it.name || code,
+        reason: note,
+        added_at: today,
+      });
+      added += 1;
+    }
+  });
+  saveWatch();
+  const msg = $("#quality-import-msg");
+  if (msg) {
+    msg.textContent = `已导入 ${added} 只` +
+      (updated ? ` · 更新备忘 ${updated}` : "") +
+      (skipped ? ` · 已有跳过 ${skipped}` : "");
+  }
+  if (state.view === "watchlist") renderWatchlist();
+}
+
 // ==================== 自选库（localStorage 持久化） ====================
 const WATCH_KEY = "hlg_watch_v1";
 
@@ -2016,6 +2123,14 @@ function route() {
   if (h.startsWith("#/watch")) {
     renderWatchlist();
     showView("watchlist");
+    return;
+  }
+  if (h.startsWith("#/quality")) {
+    loadQuality().then(() => {
+      if ((location.hash || "#/") !== h) return;
+      renderQuality();
+      showView("quality");
+    });
     return;
   }
   if (h.startsWith("#/soe")) {
@@ -2674,6 +2789,9 @@ function setupEvents() {
     } else if (state.view === "soe") {
       state.soeSearch = q;
       renderSoe();
+    } else if (state.view === "quality") {
+      state.qualitySearch = q;
+      renderQuality();
     } else if (state.view === "watchlist") {
       state.watchSearch = q;
       renderWatchlist();
@@ -2737,6 +2855,14 @@ function setupEvents() {
   $("#tab-hk").addEventListener("click", () => { location.hash = "#/hk"; });
   $("#tab-social").addEventListener("click", () => { location.hash = "#/social"; });
   $("#tab-soe").addEventListener("click", () => { location.hash = "#/soe"; });
+  const tabQualityBtn = $("#tab-quality");
+  if (tabQualityBtn) tabQualityBtn.addEventListener("click", () => { location.hash = "#/quality"; });
+  const qualityImportBtn = $("#quality-import-watch");
+  if (qualityImportBtn) qualityImportBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    importQualityToWatch();
+  });
   $("#tab-watch").addEventListener("click", () => { location.hash = "#/watch"; });
   const tabBacktest = $("#tab-backtest");
   if (tabBacktest) tabBacktest.addEventListener("click", () => { location.hash = "#/backtest"; });

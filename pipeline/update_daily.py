@@ -304,6 +304,24 @@ def _empirical_percentile(values, current):
     return sum(value <= current for value in values) / len(values) * 100
 
 
+def _quality_pool_codes():
+    """手维优质红利池代码集合；缺失文件时返回空集。"""
+    path = os.path.join(BASE, "data", "meta", "quality_pool.json")
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return set()
+    codes = set()
+    for it in (data.get("items") or data.get("stocks") or []):
+        code = str((it or {}).get("code") or "").zfill(6)
+        if len(code) == 6 and code.isdigit():
+            codes.add(code)
+    return codes
+
+
 def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=None):
     """为每只股票计算派生字段并写回 item（就地修改）。
 
@@ -315,6 +333,7 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
     today = datetime.date.today()
     raw_opens = raw_opens or {}
     raw_klines = raw_klines or {}
+    quality_codes = _quality_pool_codes()
     # 近5年窗口：从「今往前5个自然年」的1月起（如 2026 年取 2021-01 起，约68个月）。
     five_start = "%d-01" % max(cfg.get("finance_start_year", 2016),
                                today.year - 5)
@@ -506,6 +525,8 @@ def enrich_items(items, klines, company_dir, cfg, raw_opens=None, raw_klines=Non
         tags = [t for t in (it.get("tags") or []) if t != "基金持仓"]
         if is_soe and "国有企业" not in tags:
             tags.append("国有企业")
+        if code in quality_codes and "优质红利" not in tags:
+            tags.append("优质红利")
         it["tags"] = tags
     return items
 
