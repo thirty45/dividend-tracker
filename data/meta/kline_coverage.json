@@ -1,5 +1,5 @@
 {
-  "target_date": "2026-11-05",
+  "target_date": "2026-11-06",
   "stocks": 711,
   "expected_series": 1422,
   "usable_series": 1422,
@@ -9,7 +9,7 @@
     "601198:raw"
   ],
   "partial_history": [],
-  "updated_at": "2026-11-05T18:00:18+00:00",
+  "updated_at": "2026-11-06T11:48:45+00:00",
   "repairs": [
     {
       "code": "601198",
