@@ -116,7 +116,7 @@ function initials(name) {
 
 async function load() {
   try {
-    const [snap, b, fnd, cbd, ins, dma, ma60, reb] = await Promise.all([
+    const [snap, b, fnd, cbd, ins, dma, ma60, reb, ma1000] = await Promise.all([
       readJSON("data/snapshot.json"),
       readJSON("data/meta/boards.json").catch(() => null),
       readJSON("data/funds.json").catch(() => null),
@@ -125,6 +125,7 @@ async function load() {
       readJSON("data/meta/dma_low30.json").catch(() => null),
       readJSON("data/meta/ma60_year_low.json").catch(() => null),
       readJSON("data/meta/rebalance.json").catch(() => null),
+      readJSON("data/meta/ma1000_premium.json").catch(() => null),
     ]);
     if (!snap || !Array.isArray(snap.items)) throw new Error("股票快照格式不正确");
     const snapshotItems = snap.items.filter((s) => s && !isExcludedCode(s.code));
@@ -143,6 +144,9 @@ async function load() {
     }) : null;
     state.ma60YearLow = ma60 && Array.isArray(ma60.items) ? Object.assign({}, ma60, {
       items: ma60.items.filter((x) => !isExcludedCode(x && x.code)),
+    }) : null;
+    state.ma1000Premium = ma1000 && Array.isArray(ma1000.items) ? Object.assign({}, ma1000, {
+      items: ma1000.items.filter((x) => !isExcludedCode(x && x.code)),
     }) : null;
     state.rebalance = reb && Array.isArray(reb.events) ? reb : null;
     state.pyMap = new Map();
@@ -2334,10 +2338,48 @@ function renderRankings() {
     }
     return `<div class="rank-block rank-dma rank-ma60"><div class="rank-title"><span>${title}</span>${count}</div>${body}</div>`;
   };
+  const ma1000Rows = state.ma1000Premium && Array.isArray(state.ma1000Premium.items)
+    ? state.ma1000Premium.items.filter((x) => !isExcludedCode(x && x.code)).slice().sort((a, b) => {
+      const ad = a.dy == null || isNaN(Number(a.dy)) ? null : Number(a.dy);
+      const bd = b.dy == null || isNaN(Number(b.dy)) ? null : Number(b.dy);
+      if (ad == null && bd == null) return String(a.code || "").localeCompare(String(b.code || ""));
+      if (ad == null) return 1;
+      if (bd == null) return -1;
+      return bd - ad || String(a.code || "").localeCompare(String(b.code || ""));
+    }) : [];
+  const ma1000Table = (rows) => {
+    const payloadMissing = !state.ma1000Premium;
+    const title = "现价相对 1000 日均线溢价 0–5%（前复权） · 按股息率排序 · 数据日期 " +
+      esc(state.ma1000Premium?.date || "—");
+    const count = rows.length ? `<span class="rank-dma-count">${rows.length} 只</span>` : "";
+    let body = "";
+    if (payloadMissing) {
+      body = '<div class="rank-dma-empty">1000日均筛选数据暂不可用</div>';
+    } else if (!rows.length) {
+      body = '<div class="rank-dma-empty">当前没有满足条件的股票</div>';
+    } else {
+      const smap = new Map(all.map((s) => [s.code, s]));
+      body = `<div class="rank-dma-scroll rank-ma60-scroll"><table class="rank-dma-table rank-ma60-table rank-ma1000-table">` +
+        `<thead><tr><th>名称(代码)</th><th class="num">现价</th><th class="num">1000日均</th>` +
+        `<th class="num">溢价%</th><th class="num">股息率TTM%</th></tr></thead><tbody>` +
+        rows.map((x) => {
+          const code = String(x.code || "");
+          const stock = smap.get(code) || {};
+          const name = x.name || stock.name || code || "—";
+          const dy = x.dy != null ? x.dy : stock.dy;
+          return `<tr data-code="${esc(code)}"><td class="dma-name">${esc(name)}(${esc(code)})</td>` +
+            `<td class="num">${fmt(x.close)}</td><td class="num">${fmt(x.ma1000)}</td>` +
+            `<td class="num">${fmt(x.premium_pct)}</td>` +
+            `<td class="num">${fmt(dy)}</td></tr>`;
+        }).join("") + `</tbody></table></div>`;
+    }
+    return `<div class="rank-block rank-dma rank-ma60 rank-ma1000"><div class="rank-title"><span>${title}</span>${count}</div>${body}</div>`;
+  };
   const bollDmaSide = `<div class="rank-side">` +
     block("连续3天跌破布林下轨", boll3, "boll_days", "今日暂无满足条件的股票", true) +
     dmaTable(dmaRows) + `</div>`;
   box.innerHTML = ma60Table(ma60Rows) +
+    ma1000Table(ma1000Rows) +
     block("银行股息率 Top10", banks, "dy") +
     block("连续分红≥5年 · 近1月涨幅 Top10", up, "pct_1m") +
     block("连续分红≥5年 · 近1月跌幅 Top10", down, "pct_1m") +

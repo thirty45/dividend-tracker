@@ -206,6 +206,7 @@ footer { text-align: center; padding: 18px 10px 30px; }
 .rank-ma60-scroll { max-height: 360px; }
 .rank-ma60-table { width: max-content; min-width: 100%; }
 .rank-ma60-table th, .rank-ma60-table td { white-space: nowrap; }
+.rank-ma1000 { grid-column: 1 / -1; min-width: 0; }
 
 /* 高管增持排名表（全宽） */
 .insider-rank { margin: 0 0 12px; }

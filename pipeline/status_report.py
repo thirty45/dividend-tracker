@@ -55,7 +55,7 @@ def rows():
     out.append(('A股K线', 'repair', latest,
                 note + ' · 覆盖报告陈旧 %d/%d' % (stale, exp) if exp else note,
                 bool(exp) and stale / exp > 0.10))
-    for name, rel in (('MA60年低表', 'meta/ma60_year_low.json'), ('DMA低位', 'meta/dma_low30.json')):
+    for name, rel in (('MA60年低表', 'meta/ma60_year_low.json'), ('MA1000溢价表', 'meta/ma1000_premium.json'), ('DMA低位', 'meta/dma_low30.json')):
         out.append((name, 'update', _load(rel).get('date', ''), '依赖A股K线'))
     hk_latest, hk_note = _kline_note(_kline_dates('hk/kline'), hk.get('date', ''))
     out.append(('港股通', 'hk', hk.get('date', ''),
