@@ -1,0 +1,106 @@
+{
+  "strategy": "MA1000_首次触及",
+  "deployable": false,
+  "public_display": false,
+  "display_policy_untouched": true,
+  "price_basis": "qfq",
+  "ma_days": 1000,
+  "arm_premium": 0.05,
+  "max_hold_days": 60,
+  "cost_one_way": 0.0003,
+  "sample": {
+    "beg": "2018-01-01",
+    "end": "2026-11-10",
+    "n_trading_days": 2147,
+    "start": "2018-01-02",
+    "end_traded": "2026-11-10"
+  },
+  "universe": {
+    "source": "snapshot/watchlist with non-null dy",
+    "survivorship": "current_watchlist_applied_historically",
+    "survivorship_note": "股票池为当前首页可算股息率的标的，回溯到历史；已退市或当前不再入池的高息股不会出现。存在幸存者偏差，结果不可直接外推。",
+    "size": 710
+  },
+  "entry_exit": {
+    "signal": "先曾收盘相对 MA1000 溢价≥5%，再首次收盘≤均线",
+    "entry": "信号日次日开盘买入（不用信号日收盘）",
+    "take_profit": "持有期最高价触及目标价则按目标价出，同日可完成",
+    "time_stop": "60 个交易日内未触达，按第 60 个交易日收盘出；样本期末不足 60 日则按末日收盘结算，记未命中",
+    "reentry": "上一笔结束后须重新收盘>均线，并再次溢价≥5% 后，才接受下一次触及",
+    "targets": [
+      0.02,
+      0.05,
+      0.1,
+      0.15
+    ]
+  },
+  "equity_rule": {
+    "weighting": "equal_weight_active_positions_daily_rebalance",
+    "idle": "cash_return_zero",
+    "annualization": "nav_end ** (252 / N_trading_days) - 1，N 为样本期全部交易日（含空仓日）。对照口径 ann_365 用 365.25 / 日历天数。禁止用每笔平均收益直接换算年化。",
+    "cost": "买入按开盘价计单边万三，卖出按成交价（目标价或收盘价）计单边万三。未计滑点、印花税与冲击。"
+  },
+  "tiers": [
+    {
+      "target_pct": 0.02,
+      "n": 4847,
+      "hits": 4467,
+      "misses": 380,
+      "hit_rate": 0.921601,
+      "avg_hold_days_hit": 5.6682,
+      "avg_hold_days_miss": 58.3053,
+      "avg_ret_all": 0.005536,
+      "avg_ret_hit": 0.019388,
+      "avg_ret_miss": -0.157306,
+      "nav": 1.793731,
+      "ann_252": 0.070987,
+      "ann_365": 0.068217
+    },
+    {
+      "target_pct": 0.05,
+      "n": 4831,
+      "hits": 3903,
+      "misses": 928,
+      "hit_rate": 0.807907,
+      "avg_hold_days_hit": 11.4412,
+      "avg_hold_days_miss": 57.8836,
+      "avg_ret_all": 0.013756,
+      "avg_ret_hit": 0.04937,
+      "avg_ret_miss": -0.136031,
+      "nav": 3.226896,
+      "ann_252": 0.147407,
+      "ann_365": 0.141465
+    },
+    {
+      "target_pct": 0.1,
+      "n": 4417,
+      "hits": 2851,
+      "misses": 1566,
+      "hit_rate": 0.645461,
+      "avg_hold_days_hit": 16.9053,
+      "avg_hold_days_miss": 57.818,
+      "avg_ret_all": 0.025662,
+      "avg_ret_hit": 0.09934,
+      "avg_ret_miss": -0.108472,
+      "nav": 3.400489,
+      "ann_252": 0.154486,
+      "ann_365": 0.14824
+    },
+    {
+      "target_pct": 0.15,
+      "n": 3880,
+      "hits": 2016,
+      "misses": 1864,
+      "hit_rate": 0.519588,
+      "avg_hold_days_hit": 21.5719,
+      "avg_hold_days_miss": 58.1245,
+      "avg_ret_all": 0.035973,
+      "avg_ret_hit": 0.14931,
+      "avg_ret_miss": -0.086606,
+      "nav": 3.883129,
+      "ann_252": 0.172611,
+      "ann_365": 0.165581
+    }
+  ],
+  "summary_note": "ann_252 / ann_365 / nav 仅供内部复核，不上站、不接到 #/backtest，不改 display_policy。"
+}

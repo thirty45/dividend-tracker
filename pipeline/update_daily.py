@@ -207,6 +207,114 @@ def build_ma60_year_low_payload(items, raw_klines, trade_date):
     }
 
 
+# 首页筛选：现价相对 1000 日均线溢价 0–5%（含两端）。
+# 价格口径：前复权（qfq）日 K 收盘，与 data/kline 同一口径。
+# 均线为最近 1000 个交易日收盘的简单算术平均，按交易日而非日历日。
+MA1000_DAYS = 1000
+MA1000_PREMIUM_MIN = 0.0
+MA1000_PREMIUM_MAX = 5.0
+
+
+def _positive_day_closes(bars):
+    """有效正收盘的交易日序列（升序）。无法解析或非正的根跳过。"""
+    out = []
+    for b in bars or []:
+        d = b.get("d") or b.get("date") or ""
+        try:
+            value = float(b.get("c"))
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        out.append((d, value))
+    return out
+
+
+def screen_ma1000_premium(bars, ma_days=MA1000_DAYS,
+                          premium_min_pct=MA1000_PREMIUM_MIN,
+                          premium_max_pct=MA1000_PREMIUM_MAX):
+    """用最近 ma_days 个交易日收盘筛选。根数不足或最新收盘无效时返回 None。
+
+    传入哪套日 K，现价、均线和溢价就用哪套。每日流水线传入前复权日 K
+    （data/kline，price_basis=qfq）。不要把不复权序列传进来当首页框口径。
+    均线 = 最新一根（含今）往前 ma_days 个交易日收盘的简单算术平均。
+    命中条件：0 ≤ (close / ma1000 - 1) * 100 ≤ 5（含两端），且 ma1000 > 0。
+    """
+    if not bars:
+        return None
+    last = bars[-1]
+    try:
+        last_close = float(last.get("c"))
+    except (TypeError, ValueError):
+        return None
+    if last_close <= 0:
+        return None
+    closes = _positive_day_closes(bars)
+    if len(closes) < ma_days:
+        return None
+    close = closes[-1][1]
+    ma_win = [c for _, c in closes[-ma_days:]]
+    ma1000 = sum(ma_win) / float(ma_days)
+    if ma1000 <= 0:
+        return None
+    premium = (close / ma1000 - 1.0) * 100.0
+    matched = premium_min_pct <= premium <= premium_max_pct
+    return {
+        "close": round(close, 4),
+        "ma1000": round(ma1000, 4),
+        "premium_pct": round(premium, 2),
+        "days": len(closes),
+        "matched": matched,
+    }
+
+
+def build_ma1000_premium_payload(items, klines, trade_date):
+    """从最新快照（仅 dy 非空）与前复权日 K 写出首页 1000 日均溢价表。
+
+    每日更新在写出 data/meta/ma1000_premium.json 时调用本函数。
+    klines 必须是前复权（qfq）日 K，与 data/kline 同一口径；
+    不要传入不复权 raw_klines。
+    股票池 = 首页可算股息率的 snapshot/watchlist 标的，不扫全市场。
+    不足 1000 个交易日、或没有最新收盘价的剔除；按股息率 TTM 降序。
+    """
+    rows = []
+    for it in items or []:
+        dy = it.get("dy")
+        try:
+            dy = round(float(dy), 2) if dy is not None else None
+        except (TypeError, ValueError):
+            dy = None
+        if dy is None:
+            continue
+        code = it.get("code")
+        stats = screen_ma1000_premium((klines or {}).get(code) or [])
+        if not stats or not stats["matched"]:
+            continue
+        rows.append({
+            "code": code,
+            "name": it.get("name") or code,
+            "close": stats["close"],
+            "ma1000": stats["ma1000"],
+            "premium_pct": stats["premium_pct"],
+            "dy": dy,
+            "days": stats["days"],
+        })
+    rows.sort(key=lambda r: (
+        -(r["dy"] if r["dy"] is not None else -1e9),
+        r.get("code") or "",
+    ))
+    return {
+        "date": trade_date,
+        "params": {
+            "ma_days": MA1000_DAYS,
+            "premium_min_pct": MA1000_PREMIUM_MIN,
+            "premium_max_pct": MA1000_PREMIUM_MAX,
+            "price_basis": "qfq",
+        },
+        "items": rows,
+    }
+
+
 def _streak_down(bars, n=7):
     """连续 n 个交易日收盘价逐日下跌（每日收盘 < 前一日收盘）。数据不足返回 False。"""
     if not bars or len(bars) < n + 1:
@@ -991,6 +1099,13 @@ def main():
         json.dump(ma60_payload, f, ensure_ascii=False)
     print("   近一年未跌破60月均、溢价≤10%%且月线最低(不复权): %d 只"
           % len(ma60_payload["items"]),
+          flush=True)
+    # 首页 1000 日均溢价表只用前复权日 K；不复权序列仍仅供 MA60 年低表。
+    ma1000_payload = build_ma1000_premium_payload(items, klines, trade_date)
+    with open(os.path.join(meta_dir, "ma1000_premium.json"), "w", encoding="utf-8") as f:
+        json.dump(ma1000_payload, f, ensure_ascii=False)
+    print("   现价相对1000日均线溢价0–5%%(前复权): %d 只"
+          % len(ma1000_payload["items"]),
           flush=True)
 
     # Each successfully refreshed price series was already persisted above.
