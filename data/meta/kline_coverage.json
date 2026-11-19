@@ -1,17 +1,15 @@
 {
-  "target_date": "2026-11-18",
+  "target_date": "2026-11-19",
   "stocks": 711,
   "expected_series": 1422,
   "usable_series": 1422,
   "missing": [],
   "stale": [
     "601198:qfq",
-    "601198:raw",
-    "605255:qfq",
-    "605255:raw"
+    "601198:raw"
   ],
   "partial_history": [],
-  "updated_at": "2026-11-18T18:44:36+00:00",
+  "updated_at": "2026-11-19T19:12:06+00:00",
   "repairs": [
     {
       "code": "601198",
@@ -28,23 +26,7 @@
       "errors": [
         "各数据源均未取到 2026-09-14 之后的K线"
       ]
-    },
-    {
-      "code": "605255",
-      "mode": "kline",
-      "status": "failed",
-      "errors": [
-        "各数据源均未取到 2026-11-13 之后的K线"
-      ]
-    },
-    {
-      "code": "605255",
-      "mode": "kline_raw",
-      "status": "failed",
-      "errors": [
-        "各数据源均未取到 2026-11-13 之后的K线"
-      ]
     }
   ],
-  "stale_ratio": 0.0028
+  "stale_ratio": 0.0014
 }
