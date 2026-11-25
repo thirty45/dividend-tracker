@@ -1,7 +1,7 @@
 {
   "schema": "rebalance.v1",
-  "as_of": "2026-11-25",
-  "updated_at": "2026-11-25T20:01:30+08:00",
+  "as_of": "2026-11-26",
+  "updated_at": "2026-11-26T03:53:14+08:00",
   "low_vol_code": "H30269",
   "low_vol_note": "低波只跟踪 H30269 中证红利低波动（50 只，每年 12 月调整）。930955 官方名称是中证红利低波动100，季度调整，与 H30269 不是同一指数；本站红利低波主 ETF 512890 跟踪 H30269，故不并列收录 930955。",
   "calendar_note": "000922、H30269、000015 按编制方案每年 12 月调整一次，不是半年审。000016、000300 每年 6 月和 12 月审核，实施日为第二个星期五的下一交易日。ETF 跟随对应指数，不单列调样。510880 红利ETF华泰柏瑞跟踪上证红利，不跟踪中证红利。",
@@ -11,7 +11,7 @@
       "中证指数公告：中证公告接口失败: 服务器异常,请联系管理员"
     ],
     "notice_count": 1,
-    "checked_at": "2026-11-25T20:01:30+08:00"
+    "checked_at": "2026-11-26T03:53:14+08:00"
   },
   "universe": [
     {
@@ -231,6 +231,60 @@
       "announce_date": null,
       "effective_date": "2026-12-14",
       "notice_effective": "2026-12-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300_Index_Methodology_cn.pdf",
+      "source_title": "沪深300指数编制方案",
+      "list_url": "",
+      "removes_url": "",
+      "removes_note": "",
+      "status": "待公告",
+      "note": "编制方案：每年6月、12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000016-2027-06",
+      "index_code": "000016",
+      "index_name": "上证50",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510050",
+          "name": "上证50ETF华夏",
+          "source_url": "https://fund.eastmoney.com/510050.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2027-06-14",
+      "notice_effective": "2027-06-11",
+      "adds": [],
+      "removes": [],
+      "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000016_Index_Methodology_cn.pdf",
+      "source_title": "上证50指数编制方案",
+      "list_url": "",
+      "removes_url": "",
+      "removes_note": "",
+      "status": "待公告",
+      "note": "编制方案：每年6月、12月调整，实施日为该月第二个星期五的下一交易日。名单公布前为待公告。"
+    },
+    {
+      "id": "000300-2027-06",
+      "index_code": "000300",
+      "index_name": "沪深300",
+      "group": "宽基",
+      "cadence": "每年6月、12月",
+      "etfs": [
+        {
+          "code": "510300",
+          "name": "沪深300ETF华泰柏瑞",
+          "source_url": "https://fund.eastmoney.com/510300.html"
+        }
+      ],
+      "event_type": "定期审视",
+      "announce_date": null,
+      "effective_date": "2027-06-14",
+      "notice_effective": "2027-06-11",
       "adds": [],
       "removes": [],
       "source_url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000300_Index_Methodology_cn.pdf",
